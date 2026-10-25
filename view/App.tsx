@@ -36,15 +36,37 @@ function LinkForm() {
   );
 }
 
-function ChangeCard({ change, focused, onFocus }: { change: Change; focused: boolean; onFocus(id: string | null): void }) {
+/** What every card of the sidebar shares: hovering it marks its text in the doc, and clicking it opens it and shows that text. */
+interface CardProps {
+  focused: boolean;
+  open: boolean;
+  onFocus(id: string | null): void;
+  onOpen(id: string | null): void;
+}
+
+const cardClass = (kind: string, { focused, open }: CardProps, ...more: (string | false | undefined)[]) => [kind, focused && "focused", open && "open", ...more].filter(Boolean).join(" ");
+
+const hoverProps = (id: string, { onFocus }: CardProps) => ({ onMouseEnter: () => onFocus(id), onMouseLeave: () => onFocus(null) });
+
+function CardHead({ id, card, children }: { id: string; card: CardProps; children: React.ReactNode }) {
+  return (
+    <button className="card-head" aria-expanded={card.open} onClick={() => card.onOpen(card.open ? null : id)}>
+      {children}
+    </button>
+  );
+}
+
+function ChangeCard({ change, ...card }: { change: Change } & CardProps) {
   const by = change.by === "you" ? "You" : "Agent";
   return (
-    <li className={["change", change.approved && "approved", focused && "focused", change.note && "stuck"].filter(Boolean).join(" ")} data-change={change.id} onMouseEnter={() => onFocus(change.id)} onMouseLeave={() => onFocus(null)}>
-      <div className="who">
-        {change.id} · {by}
-        {change.approved && <span className="badge">Approved</span>}
-      </div>
-      <div className="what">{changeSummary(change)}</div>
+    <li className={cardClass("change", card, change.approved && "approved", change.note && "stuck")} data-change={change.id} {...hoverProps(change.id, card)}>
+      <CardHead id={change.id} card={card}>
+        <div className="who">
+          {change.id} · {by}
+          {change.approved && <span className="badge">Approved</span>}
+        </div>
+        <div className={card.open ? "what" : "what clamped"}>{changeSummary(change)}</div>
+      </CardHead>
       {change.note && <div className="note">Can't be sent: {change.note}</div>}
       <div className="row">
         {change.approved ? (
@@ -151,36 +173,60 @@ const Posts = ({ posts }: { posts: Post[] }) =>
     </div>
   ));
 
-function ThreadCard({ thread, decision, focused, onFocus }: { thread: Thread; decision: Change | undefined; focused: boolean; onFocus(id: string | null): void }) {
+const repliesNote = (replies: number) => (replies === 0 ? "" : ` · ${replies} ${replies === 1 ? "reply" : "replies"}`);
+
+function ThreadCard({ thread, decision, ...card }: { thread: Thread; decision: Change | undefined } & CardProps) {
+  const [first] = thread.posts;
   return (
-    <li className={["thread", thread.status, focused && "focused"].filter(Boolean).join(" ")} data-thread={thread.id} onMouseEnter={() => onFocus(thread.id)} onMouseLeave={() => onFocus(null)}>
-      {thread.quote && <div className="quote">“{thread.quote}”</div>}
-      <Posts posts={thread.posts} />
-      {thread.status === "resolved" ? (
-        <div className="badge">Resolved</div>
-      ) : (
-        <ReplyArea discussion={discussionOfThread(thread)} actions={decision ? <span className="decided">Resolved in {decision.id}, not sent yet</span> : <button onClick={() => mirador().apply({ op: "resolve", thread: thread.id })}>Resolve</button>} />
+    <li className={cardClass("thread", card, thread.status)} data-thread={thread.id} {...hoverProps(thread.id, card)}>
+      <CardHead id={thread.id} card={card}>
+        {thread.quote && <div className="quote one-line">“{thread.quote}”</div>}
+        {!card.open && first && (
+          <div className="one-line">
+            <b>{first.author}</b> {first.content}
+            <span className="quiet">{repliesNote(thread.posts.length - 1)}</span>
+          </div>
+        )}
+      </CardHead>
+      {card.open && (
+        <>
+          <Posts posts={thread.posts} />
+          {thread.status === "resolved" ? (
+            <div className="badge">Resolved</div>
+          ) : (
+            <ReplyArea discussion={discussionOfThread(thread)} actions={decision ? <span className="decided">Resolved in {decision.id}, not sent yet</span> : <button onClick={() => mirador().apply({ op: "resolve", thread: thread.id })}>Resolve</button>} />
+          )}
+        </>
       )}
     </li>
   );
 }
 
-function SuggestionCard({ suggestion, focused, onFocus }: { suggestion: GoogleSuggestion; focused: boolean; onFocus(id: string | null): void }) {
+function SuggestionCard({ suggestion, ...card }: { suggestion: GoogleSuggestion } & CardProps) {
   const decide = (op: "accept" | "reject") => mirador().apply({ op, suggestion: suggestion.id });
   return (
-    <li className={["suggestion", focused && "focused"].filter(Boolean).join(" ")} data-suggestion={suggestion.id} onMouseEnter={() => onFocus(suggestion.id)} onMouseLeave={() => onFocus(null)}>
-      <div className="who">{suggestion.author}</div>
-      <div className="what">{suggestion.summary}</div>
-      <Posts posts={suggestion.posts} />
-      <ReplyArea
-        discussion={discussionOfSuggestion(suggestion)}
-        actions={
-          <>
-            <button onClick={() => decide("accept")}>Accept</button>
-            <button onClick={() => decide("reject")}>Reject</button>
-          </>
-        }
-      />
+    <li className={cardClass("suggestion", card)} data-suggestion={suggestion.id} {...hoverProps(suggestion.id, card)}>
+      <CardHead id={suggestion.id} card={card}>
+        <div className="who">
+          {suggestion.author}
+          <span>{repliesNote(suggestion.posts.length)}</span>
+        </div>
+        <div className={card.open ? "what" : "what clamped"}>{suggestion.summary}</div>
+      </CardHead>
+      {card.open && (
+        <>
+          <Posts posts={suggestion.posts} />
+          <ReplyArea
+            discussion={discussionOfSuggestion(suggestion)}
+            actions={
+              <>
+                <button onClick={() => decide("accept")}>Accept</button>
+                <button onClick={() => decide("reject")}>Reject</button>
+              </>
+            }
+          />
+        </>
+      )}
     </li>
   );
 }
@@ -231,54 +277,89 @@ function SelectionBox({ selected, onDone }: { selected: Selected; onDone(): void
   );
 }
 
-function Sidebar({ document, focused, onFocus }: { document: GoogleDoc & { snapshot: Snapshot }; focused: string | null; onFocus(id: string | null): void }) {
-  const approved = document.changes.filter((change) => change.approved).length;
-  const waiting = document.changes.length - approved;
-  const { snapshot } = document;
-  const undecided = snapshot.suggestions.filter((suggestion) => !pendingDecisionOn(document.changes, suggestion.id));
+type SidebarTab = "changes" | "comments" | "suggestions";
+
+interface SidebarProps {
+  document: GoogleDoc & { snapshot: Snapshot };
+  focused: string | null;
+  open: string | null;
+  onFocus(id: string | null): void;
+  onOpen(id: string | null): void;
+}
+
+function Sidebar({ document, focused, open, onFocus, onOpen }: SidebarProps) {
+  const { snapshot, changes } = document;
+  const approved = changes.filter((change) => change.approved).length;
+  const waiting = changes.length - approved;
+  const openThreads = snapshot.threads.filter((thread) => thread.status !== "resolved");
+  const resolvedThreads = snapshot.threads.filter((thread) => thread.status === "resolved");
+  const undecided = snapshot.suggestions.filter((suggestion) => !pendingDecisionOn(changes, suggestion.id));
+  const [chosen, setChosen] = useState<SidebarTab | null>(null);
+  const [showResolved, setShowResolved] = useState(false);
+  const tabOf = (id: string): SidebarTab | null =>
+    changes.some((change) => change.id === id) ? "changes" : snapshot.threads.some((thread) => thread.id === id) ? "comments" : undecided.some((suggestion) => suggestion.id === id) ? "suggestions" : null;
+  useEffect(() => {
+    const tab = open && tabOf(open);
+    if (tab) setChosen(tab);
+    if (open && resolvedThreads.some((thread) => thread.id === open)) setShowResolved(true);
+  }, [open]);
+  const tab: SidebarTab = chosen ?? (changes.length ? "changes" : openThreads.length || !undecided.length ? "comments" : "suggestions");
+  const card = (id: string): CardProps => ({ focused: focused === id, open: open === id, onFocus, onOpen });
+  const tabs: { id: SidebarTab; title: string; count: number }[] = [
+    { id: "changes", title: "To send", count: changes.length },
+    { id: "comments", title: "Comments", count: openThreads.length },
+    { id: "suggestions", title: "Suggestions", count: undecided.length },
+  ];
+  const threadCard = (thread: Thread) => <ThreadCard key={thread.id} thread={thread} decision={pendingDecisionOn(changes, thread.id)} {...card(thread.id)} />;
   return (
     <aside className="sidebar">
-      <section>
-        <h3>Pending changes</h3>
-        {document.changes.length === 0 ? (
-          <p className="quiet">None yet. Select text in the doc to ask for a change, or ask the agent in the chat.</p>
-        ) : (
-          <>
-            <div className="row">
-              {waiting > 0 && <button onClick={() => mirador().apply({ op: "approve-all" })}>Approve all</button>}
-              <button className="primary" disabled={approved === 0} onClick={() => mirador().run("push")}>
-                Send to Google Docs{approved ? ` (${approved})` : ""}
-              </button>
-            </div>
+      <div className="tabs" role="tablist">
+        {tabs.map(({ id, title, count }) => (
+          <button key={id} role="tab" aria-selected={tab === id} onClick={() => setChosen(id)}>
+            {title} <span className="count">{count}</span>
+          </button>
+        ))}
+      </div>
+      <div className="panel" role="tabpanel" aria-label={tabs.find(({ id }) => id === tab)!.title}>
+        {tab === "changes" &&
+          (changes.length === 0 ? (
+            <p className="quiet">Nothing to send yet. Select text in the doc to ask for a change, or ask the agent in the chat.</p>
+          ) : (
             <ul>
-              {document.changes.map((change) => (
-                <ChangeCard key={change.id} change={change} focused={focused === change.id} onFocus={onFocus} />
+              {changes.map((change) => (
+                <ChangeCard key={change.id} change={change} {...card(change.id)} />
               ))}
             </ul>
+          ))}
+        {tab === "comments" && (
+          <>
+            {openThreads.length === 0 ? <p className="quiet">No open comments. Select text to write one.</p> : <ul>{openThreads.map(threadCard)}</ul>}
+            {resolvedThreads.length > 0 && (
+              <button className="link" onClick={() => setShowResolved(!showResolved)}>
+                {showResolved ? "Hide resolved" : `Show resolved (${resolvedThreads.length})`}
+              </button>
+            )}
+            {showResolved && <ul>{resolvedThreads.map(threadCard)}</ul>}
           </>
         )}
-      </section>
-      <section>
-        <h3>Comments</h3>
-        {snapshot.threads.length === 0 ? (
-          <p className="quiet">No comments. Select text to write one.</p>
-        ) : (
-          <ul>
-            {snapshot.threads.map((thread) => (
-              <ThreadCard key={thread.id} thread={thread} decision={pendingDecisionOn(document.changes, thread.id)} focused={focused === thread.id} onFocus={onFocus} />
-            ))}
-          </ul>
-        )}
-      </section>
-      {undecided.length > 0 && (
-        <section>
-          <h3>Suggestions in the doc</h3>
-          <ul>
-            {undecided.map((suggestion) => (
-              <SuggestionCard key={suggestion.id} suggestion={suggestion} focused={focused === suggestion.id} onFocus={onFocus} />
-            ))}
-          </ul>
-        </section>
+        {tab === "suggestions" &&
+          (undecided.length === 0 ? (
+            <p className="quiet">No suggestions waiting in the doc.</p>
+          ) : (
+            <ul>
+              {undecided.map((suggestion) => (
+                <SuggestionCard key={suggestion.id} suggestion={suggestion} {...card(suggestion.id)} />
+              ))}
+            </ul>
+          ))}
+      </div>
+      {changes.length > 0 && (
+        <div className="send-bar row">
+          {waiting > 0 && <button onClick={() => mirador().apply({ op: "approve-all" })}>Approve all</button>}
+          <button className="primary" disabled={approved === 0} onClick={() => mirador().run("push")}>
+            Send to Google Docs{approved ? ` (${approved})` : ""}
+          </button>
+        </div>
       )}
     </aside>
   );
@@ -287,9 +368,14 @@ function Sidebar({ document, focused, onFocus }: { document: GoogleDoc & { snaps
 export function App({ state }: { state: AppDocumentState<GoogleDoc> }) {
   const document = state.document;
   const [focused, setFocused] = useState<string | null>(null);
+  const [open, setOpen] = useState<string | null>(null);
   const [selected, setSelected] = useState<Selected | null>(null);
   const docArea = useRef<HTMLDivElement>(null);
   const running = state.task?.state === "running";
+  const openShowingText = (id: string | null) => {
+    setOpen(id);
+    if (id) docArea.current?.querySelector(`[data-mark="${CSS.escape(id)}"], [data-suggestions~="${CSS.escape(id)}"]`)?.scrollIntoView({ block: "center", behavior: "smooth" });
+  };
 
   useEffect(() => {
     const noted = document.snapshot;
@@ -338,9 +424,9 @@ export function App({ state }: { state: AppDocumentState<GoogleDoc> }) {
       ) : (
         <div className="body">
           <div className="doc" ref={docArea}>
-            <Doc snapshot={document.snapshot} changes={document.changes} focused={focused} onFocus={setFocused} />
+            <Doc snapshot={document.snapshot} changes={document.changes} focused={focused ?? open} onFocus={setFocused} onOpen={setOpen} />
           </div>
-          <Sidebar document={{ ...document, snapshot: document.snapshot }} focused={focused} onFocus={setFocused} />
+          <Sidebar document={{ ...document, snapshot: document.snapshot }} focused={focused} open={open} onFocus={setFocused} onOpen={openShowingText} />
         </div>
       )}
       {selected && (

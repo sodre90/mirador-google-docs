@@ -8,7 +8,9 @@ import { fakeGcloud } from "../tests/fake-google.ts";
 const miradorDir = process.env.MIRADOR_DIR ?? join(import.meta.dirname, "..", "..", "visualized-claude-sessions");
 const pluginDir = process.env.GOOGLE_DOCS_PLUGIN_DIR ?? join(import.meta.dirname, "..");
 const profileName = "docs";
-const fixture: unknown = JSON.parse(readFileSync(join(import.meta.dirname, "..", "tests", "fixtures", "launch-plan.json"), "utf8"));
+const launchPlan = JSON.parse(readFileSync(join(import.meta.dirname, "..", "tests", "fixtures", "launch-plan.json"), "utf8"));
+const resolvedThread = { commentId: "doco.old", status: "RESOLVED", plainTextQuote: "Q3", headPost: { postId: "doco.old", content: "Is Q3 firm?", author: { displayName: "Ben" } } };
+const fixture = { ...launchPlan, comments: [...launchPlan.comments, resolvedThread] };
 const URL = "https://docs.google.com/document/d/1testDocumentIdForMiradorGoogleDocs/edit";
 
 type Helpers = typeof import("../../visualized-claude-sessions/e2e/helpers.ts");
@@ -76,6 +78,14 @@ async function startWithTheAgent(page: Page) {
 }
 
 /** Selects text in a paragraph of the doc as a drag would, then lets go. */
+const tab = (page: Page, title: string) => view(page).getByRole("tab", { name: new RegExp(`^${title}`) }).click();
+
+/** Opens a sidebar card, unless it is open already. */
+async function open(card: ReturnType<FrameLocator["locator"]>) {
+  const head = card.locator(".card-head");
+  if ((await head.getAttribute("aria-expanded")) !== "true") await head.click();
+}
+
 async function select(page: Page, block: string, text: string) {
   await view(page)
     .locator(`[data-block="${block}"]`)
@@ -102,11 +112,18 @@ test("the agent proposes edits to a Google doc shown in Mirador; you select text
   await test.step("the agent links the doc and reads it; the view shows it as a doc, with its comments", async () => {
     expect(await tool(conversation, "app_open", { app: "google-docs", file: "launch-plan.gdoc" })).toContain("No doc is linked yet.");
     expect(await tool(conversation, "apply", { op: { op: "link", url: URL } })).toContain('run the task "pull"');
-    expect(await tool(conversation, "app_run", { task: "pull" })).toContain("Read “Launch plan” as ana@example.com: 7 blocks, 1 comment thread, 1 open suggestion.");
+    expect(await tool(conversation, "app_run", { task: "pull" })).toContain("Read “Launch plan” as ana@example.com: 7 blocks, 2 comment threads, 1 open suggestion.");
     await expect(view(page).locator("h1")).toHaveText("Launch plan");
     await expect(view(page).locator('[data-block="p2"] .bold')).toHaveText("launch");
     await expect(view(page).locator("table td")).toHaveText(["Risk", "Low"]);
-    await expect(view(page).locator(".thread")).toContainText("Which launch?");
+    const thread = view(page).locator('.thread[data-thread="doco.thread1"]');
+    await expect(view(page).getByRole("tab", { selected: true })).toHaveText("Comments 1");
+    await expect(thread).toContainText("Ana Which launch? · 1 reply");
+    await expect(thread.getByRole("button", { name: "Reply", exact: true })).toHaveCount(0);
+    await expect(view(page).locator('.thread[data-thread="doco.old"]')).toHaveCount(0);
+    await view(page).getByRole("button", { name: "Show resolved (1)" }).click();
+    await expect(view(page).locator('.thread[data-thread="doco.old"]')).toContainText("Is Q3 firm?");
+    await view(page).getByRole("button", { name: "Hide resolved" }).click();
     await expect(view(page).locator(".mark-thread")).toHaveText("launch");
     expect(await tool(conversation, "app_state", {})).toContain("p2 The launch is planned by Q3 🚀.");
   });
@@ -115,6 +132,7 @@ test("the agent proposes edits to a Google doc shown in Mirador; you select text
     expect(await tool(conversation, "apply", { op: { op: "replace", block: "p2", quote: "by Q3", with: "by the end of October" } })).toContain("Proposed c1");
     await expect(view(page).locator('[data-block="p2"] .mark-deleted')).toHaveText("by Q3");
     await expect(view(page).locator('[data-block="p2"] ins')).toHaveText("by the end of October");
+    await expect(view(page).getByRole("tab", { selected: true })).toHaveText("To send 1");
     await expect(view(page).locator('.change[data-change="c1"]')).toContainText("replace “by Q3” in p2 with “by the end of October”");
     expect(await tool(conversation, "apply", { op: { op: "approve", change: "c1" } })).toContain("Only the user can approve a change, in the view.");
     expect(await tool(conversation, "app_run", { task: "push" })).toContain("Only the user sends changes to Google Docs");
@@ -138,15 +156,22 @@ test("the agent proposes edits to a Google doc shown in Mirador; you select text
     await box.getByRole("button", { name: "Comment" }).click();
     await expect(view(page).locator('.change[data-change="c2"]')).toContainText("comment on “planned” in p2: “Planned by whom?”");
     await expect(view(page).locator('.change[data-change="c2"] .badge')).toHaveText("Approved");
-    const thread = view(page).locator(".thread");
+    await view(page).locator(".mark-thread").click();
+    await expect(view(page).getByRole("tab", { selected: true })).toHaveText("Comments 1");
+    const thread = view(page).locator('.thread[data-thread="doco.thread1"]');
+    await expect(thread.locator(".card-head")).toHaveAttribute("aria-expanded", "true");
     await thread.getByRole("button", { name: "Reply", exact: true }).click();
     await thread.getByLabel("Reply").fill("The spring launch, yes.");
     await thread.getByRole("button", { name: "Reply and resolve" }).click();
+    await expect(thread).toContainText("Resolved in c3, not sent yet");
+    await tab(page, "To send");
     await expect(view(page).locator('.change[data-change="c3"]')).toContainText("reply to thread doco.thread1: “The spring launch, yes.”, and resolve it");
   });
 
   await test.step("you ask the agent to reply to a thread; it hears the thread and what the reply should say", async () => {
-    const thread = view(page).locator(".thread");
+    await tab(page, "Comments");
+    const thread = view(page).locator('.thread[data-thread="doco.thread1"]');
+    await open(thread);
     await thread.getByRole("button", { name: "Ask the agent to reply" }).click();
     await thread.getByLabel("What should the reply say?").fill("Say it's the spring one, and thank Ana");
     await thread.getByRole("button", { name: "Ask the agent", exact: true }).click();
@@ -157,6 +182,7 @@ test("the agent proposes edits to a Google doc shown in Mirador; you select text
 
   await test.step("you approve the agent's change and send everything; it lands as suggestions and comments", async () => {
     await expect(view(page).getByRole("button", { name: "Send to Google Docs (2)" })).toBeVisible();
+    await tab(page, "To send");
     await view(page).locator('.change[data-change="c1"]').getByRole("button", { name: "Approve" }).click();
     await view(page).getByRole("button", { name: "Send to Google Docs (3)" }).click();
     await expect(view(page).locator(".task.done")).toHaveText("Sent c2, c3, c1; the edits are suggestions in the doc now.");
@@ -203,9 +229,11 @@ test("the agent proposes edits to a Google doc shown in Mirador; you select text
 
   await test.step("you accept a suggestion in the doc and ask the agent to reply to it; Send accepts it in Docs", async () => {
     google.batches.length = 0;
+    await tab(page, "Suggestions");
     const suggestion = view(page).locator('.suggestion[data-suggestion="suggest.a"]');
     await expect(suggestion).toContainText("Ben");
     await expect(suggestion).toContainText("Replace: “5k” with “10k”");
+    await open(suggestion);
     await suggestion.hover();
     await expect(view(page).locator('[data-block="p5"] .focused')).toHaveText(["10k", "5k"]);
     await suggestion.getByRole("button", { name: "Ask the agent to reply" }).click();
@@ -214,11 +242,16 @@ test("the agent proposes edits to a Google doc shown in Mirador; you select text
     await expect.poll(prompts).toContain("Write a reply to Ben's suggestion suggest.a (Replace: “5k” with “10k”):\nWhat the reply should say: Say 10k is fine");
     expect(prompts()).toContain('{"op":"reply","thread":"suggest.a","text":"…"}');
     await suggestion.getByRole("button", { name: "Accept" }).click();
-    await expect(view(page).locator('.change[data-change="c7"]')).toContainText("accept suggestion suggest.a");
     await expect(suggestion).toHaveCount(0);
+    await expect(view(page).getByRole("tab", { name: /^Suggestions/ })).toHaveText("Suggestions 0");
+    await tab(page, "To send");
+    await expect(view(page).locator('.change[data-change="c7"]')).toContainText("accept suggestion suggest.a");
     await view(page).locator('.change[data-change="c7"]').getByRole("button", { name: "Drop" }).click();
+    await tab(page, "Suggestions");
+    await open(suggestion);
     await suggestion.getByRole("button", { name: "Accept" }).click();
     await expect(suggestion).toHaveCount(0);
+    await tab(page, "To send");
     await expect(view(page).locator('.change[data-change="c8"]')).toContainText("accept suggestion suggest.a");
     await view(page).getByRole("button", { name: "Send to Google Docs (1)" }).click();
     await expect(view(page).locator(".task.done")).toHaveText("Sent c8.");

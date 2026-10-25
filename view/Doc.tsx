@@ -9,14 +9,18 @@ interface Props {
   changes: Change[];
   focused: string | null;
   onFocus(id: string | null): void;
+  /** Clicking marked text opens what marks it in the sidebar. */
+  onOpen(id: string): void;
 }
 
-function TextPiece({ piece, focused, onFocus }: { piece: Extract<Piece, { kind: "text" }>; focused: string | null; onFocus: Props["onFocus"] }) {
+function TextPiece({ piece, focused, onFocus, onOpen }: { piece: Extract<Piece, { kind: "text" }> } & Pick<Props, "focused" | "onFocus" | "onOpen">) {
   const { run, mark } = piece;
-  const classes = [run.bold && "bold", run.italic && "italic", run.underline && "underline", run.strikethrough && "strike", run.inserted && "their-insertion", run.deleted && "their-deletion", run.object && "object", mark && `mark-${mark.kind}`, (mark?.id === focused || (focused !== null && (run.inserted ?? run.deleted)?.includes(focused))) && "focused"].filter(Boolean).join(" ");
+  const suggestions = run.inserted ?? run.deleted;
+  const opened = mark?.id ?? suggestions?.[0];
+  const classes = [run.bold && "bold", run.italic && "italic", run.underline && "underline", run.strikethrough && "strike", run.inserted && "their-insertion", run.deleted && "their-deletion", run.object && "object", mark && `mark-${mark.kind}`, (mark?.id === focused || (focused !== null && suggestions?.includes(focused))) && "focused"].filter(Boolean).join(" ");
   const text = run.object ? "▣".repeat(piece.text.length) : piece.text;
   return (
-    <span className={classes || undefined} data-start={piece.start} data-mark={mark?.id} title={run.link} onMouseEnter={mark && (() => onFocus(mark.id))} onMouseLeave={mark && (() => onFocus(null))}>
+    <span className={classes || undefined} data-start={piece.start} data-mark={mark?.id} data-suggestions={suggestions?.join(" ")} title={run.link} onClick={opened ? () => onOpen(opened) : undefined} onMouseEnter={mark && (() => onFocus(mark.id))} onMouseLeave={mark && (() => onFocus(null))}>
       {text}
     </span>
   );
@@ -30,19 +34,19 @@ function AddedPiece({ mark, text, focused }: { mark: Mark; text: string; focused
   );
 }
 
-function ParagraphView({ paragraph, marks, focused, onFocus }: { paragraph: Paragraph; marks: Mark[] } & Pick<Props, "focused" | "onFocus">) {
+function ParagraphView({ paragraph, marks, focused, onFocus, onOpen }: { paragraph: Paragraph; marks: Mark[] } & Pick<Props, "focused" | "onFocus" | "onOpen">) {
   const Tag = TAGS[paragraph.style] ?? "p";
   const pieces = piecesOf(paragraph, marks);
   const className = [paragraph.style === "SUBTITLE" && "subtitle", paragraph.bullet && "bullet"].filter(Boolean).join(" ") || undefined;
   return (
     <Tag className={className} data-block={paragraph.id} style={paragraph.bullet && { marginInlineStart: `${1.5 + paragraph.bullet.nesting * 1.5}em` }}>
-      {pieces.map((piece, index) => (piece.kind === "text" ? <TextPiece key={index} piece={piece} focused={focused} onFocus={onFocus} /> : <AddedPiece key={index} mark={piece.mark} text={piece.text} focused={focused} />))}
+      {pieces.map((piece, index) => (piece.kind === "text" ? <TextPiece key={index} piece={piece} focused={focused} onFocus={onFocus} onOpen={onOpen} /> : <AddedPiece key={index} mark={piece.mark} text={piece.text} focused={focused} />))}
       {paragraph.text === "" && pieces.length === 0 && <br />}
     </Tag>
   );
 }
 
-function BlockView({ block, marks, focused, onFocus }: { block: Block; marks: Map<string, Mark[]> } & Pick<Props, "focused" | "onFocus">) {
+function BlockView({ block, marks, focused, onFocus, onOpen }: { block: Block; marks: Map<string, Mark[]> } & Pick<Props, "focused" | "onFocus" | "onOpen">) {
   if (block.kind === "table")
     return (
       <table data-block={block.id}>
@@ -57,11 +61,11 @@ function BlockView({ block, marks, focused, onFocus }: { block: Block; marks: Ma
         </tbody>
       </table>
     );
-  return <ParagraphView paragraph={block} marks={marks.get(block.id) ?? []} focused={focused} onFocus={onFocus} />;
+  return <ParagraphView paragraph={block} marks={marks.get(block.id) ?? []} focused={focused} onFocus={onFocus} onOpen={onOpen} />;
 }
 
 /** The doc as Google shows it, with the pending changes and the open threads marked in its text. */
-export function Doc({ snapshot, changes, focused, onFocus }: Props) {
+export function Doc({ snapshot, changes, focused, onFocus, onOpen }: Props) {
   const marks = useMemo(() => marksOf(snapshot, changes), [snapshot, changes]);
   return (
     <article className="page">
@@ -69,7 +73,7 @@ export function Doc({ snapshot, changes, focused, onFocus }: Props) {
         <section key={tab.id} data-tab={tab.id}>
           {snapshot.tabs.length > 1 && <div className="tab-title">{tab.title}</div>}
           {tab.blocks.map((block) => (
-            <BlockView key={block.id} block={block} marks={marks} focused={focused} onFocus={onFocus} />
+            <BlockView key={block.id} block={block} marks={marks} focused={focused} onFocus={onFocus} onOpen={onOpen} />
           ))}
         </section>
       ))}
