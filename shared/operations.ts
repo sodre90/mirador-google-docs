@@ -119,8 +119,17 @@ function bodyOf(operation: Operation, snapshot: Snapshot): ChangeBody {
 
 const PROPOSALS = new Set(["replace", "insert", "delete", "comment", "reply", "resolve", "accept", "reject"]);
 
+/** The pending change that already accepts, rejects or resolves what `body` would, if any: one is enough. */
+export const pendingDecisionOn = (changes: Change[], target: string) =>
+  changes.find((change) => (change.kind === "accept" || change.kind === "reject" || change.kind === "resolve" || (change.kind === "reply" && change.resolve)) && threadIdOf(change) === target);
+
+const decisionTarget = (body: ChangeBody) => (body.kind === "accept" || body.kind === "reject" ? body.suggestion : body.kind === "resolve" || (body.kind === "reply" && body.resolve) ? body.thread : null);
+
 function propose(document: GoogleDoc, operation: Operation, author: AppAuthor | undefined): Applied {
   const body = bodyOf(operation, requireSnapshot(document));
+  const target = decisionTarget(body);
+  const earlier = target && pendingDecisionOn(document.changes, target);
+  if (earlier) throw new Error(`${earlier.id} already does that: ${changeSummary(earlier)}. Drop it first to decide otherwise.`);
   const yours = author?.kind === "you";
   const change: Change = { ...body, id: `c${document.nextChange}`, by: yours ? "you" : "agent", approved: yours };
   return {

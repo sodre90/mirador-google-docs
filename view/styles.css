@@ -276,3 +276,8 @@ ul {
     position: static;
   }
 }
+
+.decided {
+  color: light-dark(#5f6368, #9aa0a6);
+  font-size: 0.9em;
+}

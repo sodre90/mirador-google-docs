@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { AppDocumentState } from "../mirador/api.ts";
 import type { Change, GoogleDoc, GoogleSuggestion, Post, Snapshot, Thread } from "../shared/document.ts";
-import { changeSummary } from "../shared/operations.ts";
+import { changeSummary, pendingDecisionOn } from "../shared/operations.ts";
 import { Doc, selectionIn, type Selected } from "./Doc.tsx";
 
 const mirador = () => window.mirador;
@@ -151,7 +151,7 @@ const Posts = ({ posts }: { posts: Post[] }) =>
     </div>
   ));
 
-function ThreadCard({ thread, focused, onFocus }: { thread: Thread; focused: boolean; onFocus(id: string | null): void }) {
+function ThreadCard({ thread, decision, focused, onFocus }: { thread: Thread; decision: Change | undefined; focused: boolean; onFocus(id: string | null): void }) {
   return (
     <li className={["thread", thread.status, focused && "focused"].filter(Boolean).join(" ")} data-thread={thread.id} onMouseEnter={() => onFocus(thread.id)} onMouseLeave={() => onFocus(null)}>
       {thread.quote && <div className="quote">“{thread.quote}”</div>}
@@ -159,13 +159,13 @@ function ThreadCard({ thread, focused, onFocus }: { thread: Thread; focused: boo
       {thread.status === "resolved" ? (
         <div className="badge">Resolved</div>
       ) : (
-        <ReplyArea discussion={discussionOfThread(thread)} actions={<button onClick={() => mirador().apply({ op: "resolve", thread: thread.id })}>Resolve</button>} />
+        <ReplyArea discussion={discussionOfThread(thread)} actions={decision ? <span className="decided">Resolved in {decision.id}, not sent yet</span> : <button onClick={() => mirador().apply({ op: "resolve", thread: thread.id })}>Resolve</button>} />
       )}
     </li>
   );
 }
 
-function SuggestionCard({ suggestion, focused, onFocus }: { suggestion: GoogleSuggestion; focused: boolean; onFocus(id: string | null): void }) {
+function SuggestionCard({ suggestion, decision, focused, onFocus }: { suggestion: GoogleSuggestion; decision: Change | undefined; focused: boolean; onFocus(id: string | null): void }) {
   const decide = (op: "accept" | "reject") => mirador().apply({ op, suggestion: suggestion.id });
   return (
     <li className={["suggestion", focused && "focused"].filter(Boolean).join(" ")} data-suggestion={suggestion.id} onMouseEnter={() => onFocus(suggestion.id)} onMouseLeave={() => onFocus(null)}>
@@ -175,10 +175,14 @@ function SuggestionCard({ suggestion, focused, onFocus }: { suggestion: GoogleSu
       <ReplyArea
         discussion={discussionOfSuggestion(suggestion)}
         actions={
-          <>
-            <button onClick={() => decide("accept")}>Accept</button>
-            <button onClick={() => decide("reject")}>Reject</button>
-          </>
+          decision ? (
+            <span className="decided">{decision.kind === "accept" ? "Accepted" : "Rejected"} in {decision.id}, not sent yet</span>
+          ) : (
+            <>
+              <button onClick={() => decide("accept")}>Accept</button>
+              <button onClick={() => decide("reject")}>Reject</button>
+            </>
+          )
         }
       />
     </li>
@@ -264,7 +268,7 @@ function Sidebar({ document, focused, onFocus }: { document: GoogleDoc & { snaps
         ) : (
           <ul>
             {snapshot.threads.map((thread) => (
-              <ThreadCard key={thread.id} thread={thread} focused={focused === thread.id} onFocus={onFocus} />
+              <ThreadCard key={thread.id} thread={thread} decision={pendingDecisionOn(document.changes, thread.id)} focused={focused === thread.id} onFocus={onFocus} />
             ))}
           </ul>
         )}
@@ -274,7 +278,7 @@ function Sidebar({ document, focused, onFocus }: { document: GoogleDoc & { snaps
           <h3>Suggestions in the doc</h3>
           <ul>
             {snapshot.suggestions.map((suggestion) => (
-              <SuggestionCard key={suggestion.id} suggestion={suggestion} focused={focused === suggestion.id} onFocus={onFocus} />
+              <SuggestionCard key={suggestion.id} suggestion={suggestion} decision={pendingDecisionOn(document.changes, suggestion.id)} focused={focused === suggestion.id} onFocus={onFocus} />
             ))}
           </ul>
         </section>

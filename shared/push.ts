@@ -67,12 +67,16 @@ function commentRequests(change: Change, fresh: Snapshot): unknown[] | string {
 export function planPush(document: GoogleDoc, fresh: Snapshot): PushPlan {
   const plan: PushPlan = { commentRequests: [], commentChanges: [], suggestionRequests: [], suggestionChanges: [], decisionRequests: [], decisionChanges: [], problems: {} };
   const approved = document.changes.filter(({ approved }) => approved);
+  const decided = new Map<string, string>();
   for (const change of approved.filter((change) => change.kind === "accept" || change.kind === "reject")) {
     const request = decisionRequest(change as Extract<Change, { kind: "accept" | "reject" }>, fresh);
-    if (typeof request === "string") plan.problems[change.id] = request;
+    const earlier = decided.get(change.suggestion);
+    if (earlier) plan.problems[change.id] = `${earlier} already decides that suggestion; drop this one.`;
+    else if (typeof request === "string") plan.problems[change.id] = request;
     else {
       plan.decisionRequests.push(request);
       plan.decisionChanges.push(change.id);
+      decided.set(change.suggestion, change.id);
     }
   }
   for (const change of approved.filter((change) => change.kind === "comment" || change.kind === "reply" || change.kind === "resolve")) {

@@ -206,6 +206,24 @@ describe("sending", () => {
 });
 
 describe("suggestions in the doc", () => {
+  test("Send skips a second decision on one suggestion, as docs saved before it was refused can hold", () => {
+    const accept = { kind: "accept", suggestion: "suggest.a", by: "you", approved: true } as const;
+    const document: GoogleDoc = { ...linked(), changes: [{ ...accept, id: "c1" }, { ...accept, id: "c2" }], nextChange: 3 };
+    const plan = planPush(document, snapshot());
+    expect(plan.decisionRequests).toEqual([{ acceptSuggestion: { suggestionId: "suggest.a" } }]);
+    expect(plan.problems).toEqual({ c2: "c1 already decides that suggestion; drop this one." });
+  });
+
+  test("a suggestion is accepted or rejected once, and a thread resolved once, until that change is dropped", () => {
+    const decided = applied(linked(), [{ op: "accept", suggestion: "suggest.a" }, you], [{ op: "resolve", thread: "doco.thread1" }, you]);
+    expect(() => applyOperation(decided, { op: "accept", suggestion: "suggest.a" }, you)).toThrow("c1 already does that: accept suggestion suggest.a. Drop it first to decide otherwise.");
+    expect(() => applyOperation(decided, { op: "reject", suggestion: "suggest.a" }, agent)).toThrow("c1 already does that");
+    expect(() => applyOperation(decided, { op: "reply", thread: "doco.thread1", text: "Done.", resolve: true }, you)).toThrow("c2 already does that: resolve thread doco.thread1.");
+    expect(applyOperation(decided, { op: "reply", thread: "doco.thread1", text: "Done." }, you).document.changes).toHaveLength(3);
+    const dropped = applied(decided, [{ op: "drop", change: "c1" }, you]);
+    expect(applyOperation(dropped, { op: "reject", suggestion: "suggest.a" }, you).summary).toBe("Added c3: reject suggestion suggest.a.");
+  });
+
   test("a doc saved before suggestions kept their replies still reads", () => {
     const saved = snapshot();
     const older = { ...saved, suggestions: saved.suggestions.map(({ posts, ...rest }) => rest) };
