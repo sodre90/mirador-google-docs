@@ -165,7 +165,7 @@ function ThreadCard({ thread, decision, focused, onFocus }: { thread: Thread; de
   );
 }
 
-function SuggestionCard({ suggestion, decision, focused, onFocus }: { suggestion: GoogleSuggestion; decision: Change | undefined; focused: boolean; onFocus(id: string | null): void }) {
+function SuggestionCard({ suggestion, focused, onFocus }: { suggestion: GoogleSuggestion; focused: boolean; onFocus(id: string | null): void }) {
   const decide = (op: "accept" | "reject") => mirador().apply({ op, suggestion: suggestion.id });
   return (
     <li className={["suggestion", focused && "focused"].filter(Boolean).join(" ")} data-suggestion={suggestion.id} onMouseEnter={() => onFocus(suggestion.id)} onMouseLeave={() => onFocus(null)}>
@@ -175,14 +175,10 @@ function SuggestionCard({ suggestion, decision, focused, onFocus }: { suggestion
       <ReplyArea
         discussion={discussionOfSuggestion(suggestion)}
         actions={
-          decision ? (
-            <span className="decided">{decision.kind === "accept" ? "Accepted" : "Rejected"} in {decision.id}, not sent yet</span>
-          ) : (
-            <>
-              <button onClick={() => decide("accept")}>Accept</button>
-              <button onClick={() => decide("reject")}>Reject</button>
-            </>
-          )
+          <>
+            <button onClick={() => decide("accept")}>Accept</button>
+            <button onClick={() => decide("reject")}>Reject</button>
+          </>
         }
       />
     </li>
@@ -239,6 +235,7 @@ function Sidebar({ document, focused, onFocus }: { document: GoogleDoc & { snaps
   const approved = document.changes.filter((change) => change.approved).length;
   const waiting = document.changes.length - approved;
   const { snapshot } = document;
+  const undecided = snapshot.suggestions.filter((suggestion) => !pendingDecisionOn(document.changes, suggestion.id));
   return (
     <aside className="sidebar">
       <section>
@@ -273,12 +270,12 @@ function Sidebar({ document, focused, onFocus }: { document: GoogleDoc & { snaps
           </ul>
         )}
       </section>
-      {snapshot.suggestions.length > 0 && (
+      {undecided.length > 0 && (
         <section>
           <h3>Suggestions in the doc</h3>
           <ul>
-            {snapshot.suggestions.map((suggestion) => (
-              <SuggestionCard key={suggestion.id} suggestion={suggestion} decision={pendingDecisionOn(document.changes, suggestion.id)} focused={focused === suggestion.id} onFocus={onFocus} />
+            {undecided.map((suggestion) => (
+              <SuggestionCard key={suggestion.id} suggestion={suggestion} focused={focused === suggestion.id} onFocus={onFocus} />
             ))}
           </ul>
         </section>

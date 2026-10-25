@@ -215,11 +215,13 @@ test("the agent proposes edits to a Google doc shown in Mirador; you select text
     expect(prompts()).toContain('{"op":"reply","thread":"suggest.a","text":"…"}');
     await suggestion.getByRole("button", { name: "Accept" }).click();
     await expect(view(page).locator('.change[data-change="c7"]')).toContainText("accept suggestion suggest.a");
-    await expect(suggestion.getByRole("button", { name: "Accept" })).toHaveCount(0);
-    await expect(suggestion.getByRole("button", { name: "Reject" })).toHaveCount(0);
-    await expect(suggestion).toContainText("Accepted in c7, not sent yet");
+    await expect(suggestion).toHaveCount(0);
+    await view(page).locator('.change[data-change="c7"]').getByRole("button", { name: "Drop" }).click();
+    await suggestion.getByRole("button", { name: "Accept" }).click();
+    await expect(suggestion).toHaveCount(0);
+    await expect(view(page).locator('.change[data-change="c8"]')).toContainText("accept suggestion suggest.a");
     await view(page).getByRole("button", { name: "Send to Google Docs (1)" }).click();
-    await expect(view(page).locator(".task.done")).toHaveText("Sent c7.");
+    await expect(view(page).locator(".task.done")).toHaveText("Sent c8.");
     expect(google.batches).toEqual([{ requests: [{ acceptSuggestion: { suggestionId: "suggest.a" } }] }]);
   });
 
