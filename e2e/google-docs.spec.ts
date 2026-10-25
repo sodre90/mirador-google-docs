@@ -142,6 +142,8 @@ test("the agent proposes edits to a Google doc shown in Mirador; you select text
     await expect(view(page).locator('.change[data-change="c1"]')).toContainText("replace “by Q3” in p2 with “by the end of October”");
     expect(await tool(conversation, "apply", { op: { op: "approve", change: "c1" } })).toContain("Only the user can approve a change, in the view.");
     expect(await tool(conversation, "app_run", { task: "push" })).toContain("Only the user sends changes to Google Docs");
+    await expect(view(page).locator(".task")).toHaveText("The agent asked to send the changes. Look them over, then press Send.");
+    await expect(view(page).locator(".problem")).toHaveCount(0);
     expect(google.batches).toEqual([]);
   });
 

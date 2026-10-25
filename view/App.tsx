@@ -16,6 +16,7 @@ function TaskLine({ state }: { state: AppDocumentState<GoogleDoc> }) {
         {task.text ?? task.title}… <button onClick={() => mirador().stopTask()}>Stop</button>
       </p>
     );
+  if (task.state === "failed" && task.name === "push" && task.author.kind === "agent") return <p className="task">The agent asked to send the changes. Look them over, then press Send.</p>;
   if (task.state === "failed") return <p className="problem">{task.problem}</p>;
   if (task.state === "done") return <p className="task done">{task.summary}</p>;
   return <p className="task">{task.title}: stopped.</p>;
