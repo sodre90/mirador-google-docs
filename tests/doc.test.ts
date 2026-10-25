@@ -206,6 +206,14 @@ describe("sending", () => {
 });
 
 describe("suggestions in the doc", () => {
+  test("a doc saved before suggestions kept their replies still reads", () => {
+    const saved = snapshot();
+    const older = { ...saved, suggestions: saved.suggestions.map(({ posts, ...rest }) => rest) };
+    const document = checkedDocument(JSON.parse(JSON.stringify({ url: URL, snapshot: older, changes: [], nextChange: 1 })));
+    expect(document.snapshot!.suggestions.every(({ posts }) => posts.length === 0)).toBe(true);
+    expect(describeDocument(document)).toContain("Suggestions in the doc:");
+  });
+
   test("you accept, reject or reply to one; it goes last on Send, after the edits placed in the text it changes", () => {
     const document = applied(
       linked(),

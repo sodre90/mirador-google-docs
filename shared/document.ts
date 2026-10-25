@@ -128,6 +128,9 @@ export function documentIdOf(url: string): string {
 }
 
 /** Reads the app's file, which may also be a bare link file that holds just { "url": "…" }. */
+/** Snapshots saved before suggestions kept their replies have none. */
+const snapshotWithSuggestionPosts = (snapshot: Snapshot): Snapshot => ({ ...snapshot, suggestions: (snapshot.suggestions ?? []).map((suggestion) => ({ ...suggestion, posts: suggestion.posts ?? [] })) });
+
 export function checkedDocument(value: unknown): GoogleDoc {
   if (typeof value !== "object" || value === null) throw new Error("not a Google Docs link: the file should hold an object with a url");
   const given = value as Partial<GoogleDoc>;
@@ -136,7 +139,7 @@ export function checkedDocument(value: unknown): GoogleDoc {
   return {
     url,
     documentId: url ? documentIdOf(url) : null,
-    snapshot: given.snapshot ?? null,
+    snapshot: given.snapshot ? snapshotWithSuggestionPosts(given.snapshot) : null,
     changes: Array.isArray(given.changes) ? given.changes : [],
     nextChange: typeof given.nextChange === "number" ? given.nextChange : 1,
   };
