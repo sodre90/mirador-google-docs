@@ -81,10 +81,15 @@ export function Doc({ snapshot, changes, focused, onFocus, onOpen }: Props) {
   );
 }
 
-export interface Selected {
+/** The selected text of one paragraph: a selection over several paragraphs has a part for each. */
+export interface SelectedPart {
   block: string;
   quote: string;
   at: number;
+}
+
+export interface Selected {
+  parts: SelectedPart[];
   /** Where the selection shows, for the box asking what to do with it. */
   rect: DOMRect;
 }
@@ -92,23 +97,34 @@ export interface Selected {
 /** Where a point of a selection falls in its paragraph's text, from the piece it is in; null in a change's added text. */
 function offsetOf(node: Node, offset: number): { block: string; at: number } | null {
   const element = node.nodeType === Node.TEXT_NODE ? node.parentElement : (node as Element);
-  const piece = element?.closest<HTMLElement>("[data-start]");
   const block = element?.closest<HTMLElement>("[data-block]");
-  if (!piece || !block || element?.closest("ins")) return null;
+  if (!block || element?.closest("ins")) return null;
+  const piece = element?.closest<HTMLElement>("[data-start]");
+  if (!piece) return offset === 0 && element === block ? { block: block.dataset.block!, at: 0 } : null;
   const inPiece = node.nodeType === Node.TEXT_NODE ? Math.min(offset, piece.textContent?.length ?? 0) : 0;
   return { block: block.dataset.block!, at: Number(piece.dataset.start) + inPiece };
 }
 
-/** The text selected in one paragraph of the doc, as the paragraph's own text, or null for any other selection. */
+/** The text selected in the doc, as each paragraph's own text, or null for a selection that can't be asked about. */
 export function selectionIn(snapshot: Snapshot, selection: Selection | null): Selected | null {
   if (!selection || selection.isCollapsed || selection.rangeCount === 0) return null;
   const range = selection.getRangeAt(0);
   const start = offsetOf(range.startContainer, range.startOffset);
   const end = offsetOf(range.endContainer, range.endOffset);
-  if (!start || !end || start.block !== end.block || end.at <= start.at) return null;
-  const paragraph = snapshot.tabs.flatMap((tab) => tab.blocks).find((block): block is Paragraph => block.id === start.block && block.kind === "paragraph");
-  if (!paragraph) return null;
-  const quote = paragraph.text.slice(start.at, end.at);
-  if (!quote.trim() || quote.includes(OBJECT_MARK)) return null;
-  return { block: start.block, quote, at: start.at, rect: range.getBoundingClientRect() };
+  if (!start || !end) return null;
+  const blocks = snapshot.tabs.flatMap((tab) => tab.blocks);
+  const first = blocks.findIndex((block) => block.id === start.block);
+  const last = blocks.findIndex((block) => block.id === end.block);
+  if (first === -1 || last < first || (first === last && end.at <= start.at)) return null;
+  const parts = blocks
+    .slice(first, last + 1)
+    .filter((block): block is Paragraph => block.kind === "paragraph")
+    .map((paragraph) => {
+      const from = paragraph.id === start.block ? start.at : 0;
+      const to = paragraph.id === end.block ? end.at : paragraph.text.length;
+      return { block: paragraph.id, quote: paragraph.text.slice(from, to), at: from };
+    })
+    .filter(({ quote }) => quote.trim());
+  if (!parts.length || (parts.length === 1 && parts[0].quote.includes(OBJECT_MARK))) return null;
+  return { parts, rect: range.getBoundingClientRect() };
 }

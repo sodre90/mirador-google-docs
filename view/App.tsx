@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { AppDocumentState } from "../mirador/api.ts";
 import type { Change, GoogleDoc, GoogleSuggestion, Post, Snapshot, Thread } from "../shared/document.ts";
 import { changeSummary, pendingDecisionOn } from "../shared/operations.ts";
-import { Doc, selectionIn, type Selected } from "./Doc.tsx";
+import { Doc, selectionIn, type Selected, type SelectedPart } from "./Doc.tsx";
 
 const mirador = () => window.mirador;
 
@@ -231,31 +231,49 @@ function SuggestionCard({ suggestion, ...card }: { suggestion: GoogleSuggestion 
   );
 }
 
+const exampleReplace = ({ block, quote, at }: SelectedPart) => JSON.stringify({ op: "replace", block, quote, at, with: "…" });
+
 /** What the agent hears when the user asks for a change to the text they selected. */
-export function rewriteRequest(selected: Omit<Selected, "rect">, words: string) {
-  const example = { op: "replace", block: selected.block, quote: selected.quote, at: selected.at, with: "…" };
-  return `About “${selected.quote}” in ${selected.block}: ${words.trim()}\nPropose it with apply, e.g. ${JSON.stringify(example)}; I approve it in the view before it goes to the doc.`;
+export function rewriteRequest(parts: SelectedPart[], words: string) {
+  const approval = "I approve it in the view before it goes to the doc.";
+  if (parts.length === 1) return `About “${parts[0].quote}” in ${parts[0].block}: ${words.trim()}\nPropose it with apply, e.g. ${exampleReplace(parts[0])}; ${approval}`;
+  const first = parts[0];
+  const last = parts[parts.length - 1];
+  return [
+    `About the text from ${first.block} through ${last.block}:`,
+    ...parts.map(({ block, quote }) => `- ${block}: “${quote}”`),
+    words.trim(),
+    `Propose it with apply, one change per paragraph, e.g. ${exampleReplace(first)}; ${approval}`,
+  ].join("\n");
 }
+
+const shortQuote = (parts: SelectedPart[]) => {
+  const text = parts.map(({ quote }) => quote).join(" ¶ ");
+  return text.length > 80 ? `${text.slice(0, 80)}…` : text;
+};
 
 function SelectionBox({ selected, onDone }: { selected: Selected; onDone(): void }) {
   const [words, setWords] = useState("");
   const [sent, setSent] = useState(false);
+  const { parts } = selected;
+  const oneParagraph = parts.length === 1;
   const box = { top: selected.rect.bottom + window.scrollY + 6, left: Math.max(8, Math.min(selected.rect.left + window.scrollX, window.innerWidth - 340)) };
   const ask = async () => {
     setSent(true);
-    await mirador().prompt(rewriteRequest(selected, words));
+    await mirador().prompt(rewriteRequest(parts, words));
     onDone();
   };
   const comment = () => {
-    mirador().apply({ op: "comment", block: selected.block, quote: selected.quote, at: selected.at, text: words.trim() });
+    const [{ block, quote, at }] = parts;
+    mirador().apply({ op: "comment", block, quote, at, text: words.trim() });
     onDone();
   };
   return (
     <div className="selection-box" style={box} role="dialog" aria-label="Selected text" onMouseDown={(event) => event.stopPropagation()}>
-      <div className="quote">“{selected.quote.length > 80 ? `${selected.quote.slice(0, 80)}…` : selected.quote}”</div>
+      <div className="quote">“{shortQuote(parts)}”</div>
       <textarea
         aria-label="What should change here?"
-        placeholder="What should change here? Or write a comment."
+        placeholder={oneParagraph ? "What should change here? Or write a comment." : "What should change here?"}
         autoFocus
         value={words}
         onChange={(event) => setWords(event.target.value)}
@@ -268,11 +286,12 @@ function SelectionBox({ selected, onDone }: { selected: Selected; onDone(): void
         <button className="primary" disabled={!words.trim() || sent} onClick={ask}>
           Ask the agent
         </button>
-        <button disabled={!words.trim()} onClick={comment}>
+        <button disabled={!words.trim() || !oneParagraph} onClick={comment}>
           Comment
         </button>
         <button onClick={onDone}>Cancel</button>
       </div>
+      {!oneParagraph && <div className="quiet">A comment goes on text in one paragraph.</div>}
     </div>
   );
 }

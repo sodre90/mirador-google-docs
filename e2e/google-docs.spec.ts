@@ -77,7 +77,6 @@ async function startWithTheAgent(page: Page) {
   return conversation;
 }
 
-/** Selects text in a paragraph of the doc as a drag would, then lets go. */
 const tab = (page: Page, title: string) => view(page).getByRole("tab", { name: new RegExp(`^${title}`) }).click();
 
 /** Opens a sidebar card, unless it is open already. */
@@ -86,25 +85,32 @@ async function open(card: ReturnType<FrameLocator["locator"]>) {
   if ((await head.getAttribute("aria-expanded")) !== "true") await head.click();
 }
 
-async function select(page: Page, block: string, text: string) {
+/** Selects as a drag would, from the start of `from`'s text in its paragraph to the end of `to`'s text in its own, then lets go. */
+async function selectAcross(page: Page, from: [block: string, text: string], to: [block: string, text: string]) {
   await view(page)
-    .locator(`[data-block="${block}"]`)
-    .evaluate((paragraph, wanted) => {
-      const walker = document.createTreeWalker(paragraph, NodeFilter.SHOW_TEXT);
-      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-        const at = node.textContent!.indexOf(wanted);
-        if (at === -1 || node.parentElement!.closest("ins")) continue;
-        const range = document.createRange();
-        range.setStart(node, at);
-        range.setEnd(node, at + wanted.length);
-        getSelection()!.removeAllRanges();
-        getSelection()!.addRange(range);
-        node.parentElement!.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
-        return;
-      }
-      throw new Error(`${wanted} isn't in one piece of ${paragraph.textContent}`);
-    }, text);
+    .locator(".page")
+    .evaluate((page, [from, to]) => {
+      const point = ([block, wanted]: string[], atEnd: boolean) => {
+        const paragraph = page.querySelector(`[data-block="${block}"]`)!;
+        const walker = document.createTreeWalker(paragraph, NodeFilter.SHOW_TEXT);
+        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+          const at = node.textContent!.indexOf(wanted);
+          if (at !== -1 && !node.parentElement!.closest("ins")) return { node, offset: atEnd ? at + wanted.length : at };
+        }
+        throw new Error(`${wanted} isn't in one piece of ${paragraph.textContent}`);
+      };
+      const start = point(from, false);
+      const end = point(to, true);
+      const range = document.createRange();
+      range.setStart(start.node, start.offset);
+      range.setEnd(end.node, end.offset);
+      getSelection()!.removeAllRanges();
+      getSelection()!.addRange(range);
+      end.node.parentElement!.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+    }, [from, to]);
 }
+
+const select = (page: Page, block: string, text: string) => selectAcross(page, [block, text], [block, text]);
 
 test("the agent proposes edits to a Google doc shown in Mirador; you select text to ask for more and comment, approve each, and send them as suggestions", async ({ page }) => {
   const conversation = await startWithTheAgent(page);
@@ -147,6 +153,18 @@ test("the agent proposes edits to a Google doc shown in Mirador; you select text
     await expect(box).toBeHidden();
     await expect.poll(prompts).toContain("About “We ship” in p4: Say who ships it");
     expect(prompts()).toContain('{"op":"replace","block":"p4","quote":"We ship","at":0,"with":"…"}');
+  });
+
+  await test.step("you select across paragraphs and ask the agent about all of it; a comment needs one paragraph", async () => {
+    await selectAcross(page, ["p4", "review by Q3."], ["p5", "Budget:"]);
+    const box = view(page).getByRole("dialog", { name: "Selected text" });
+    await expect(box.locator(".quote")).toHaveText("“review by Q3. ¶ Budget:”");
+    await box.getByLabel("What should change here?").fill("Merge these into one sentence");
+    await expect(box.getByRole("button", { name: "Comment" })).toBeDisabled();
+    await expect(box).toContainText("A comment goes on text in one paragraph.");
+    await box.getByRole("button", { name: "Ask the agent" }).click();
+    await expect(box).toBeHidden();
+    await expect.poll(prompts).toContain("About the text from p4 through p5:\n- p4: “review by Q3.”\n- p5: “Budget:”\nMerge these into one sentence\nPropose it with apply, one change per paragraph");
   });
 
   await test.step("you comment on a selection and reply to a thread; both are yours, so they're approved already", async () => {
