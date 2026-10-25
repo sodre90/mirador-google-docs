@@ -1,6 +1,7 @@
 import type { AppTask, AppTaskContext } from "../mirador/api.ts";
 import { snapshotOf } from "../shared/convert.ts";
 import type { GoogleDoc, Snapshot } from "../shared/document.ts";
+import { countOf } from "../shared/operations.ts";
 import { planPush } from "../shared/push.ts";
 import { batchUpdate, getDocument, GoogleError, signedInAccounts, signIn, SignInNeeded, tokenFor } from "./google.ts";
 
@@ -32,8 +33,6 @@ async function read(document: GoogleDoc, signal: AbortSignal): Promise<{ snapsho
   throw new Error(`None of the signed-in accounts could read ${document.url}: ${refusals.join(" ")} Sign in an account that can open the doc.`);
 }
 
-const counted = (count: number, one: string, many = `${one}s`) => `${count} ${count === 1 ? one : many}`;
-
 export const pull: AppTask<GoogleDoc> = {
   title: "Read the doc from Google Docs",
   async run({ document, apply, progress, signal }: AppTaskContext<GoogleDoc>) {
@@ -41,7 +40,7 @@ export const pull: AppTask<GoogleDoc> = {
     const { snapshot } = await read(document, signal);
     await apply({ op: "pulled", snapshot });
     const blocks = snapshot.tabs.reduce((sum, tab) => sum + tab.blocks.length, 0);
-    return `Read “${snapshot.title}” as ${snapshot.account}: ${counted(blocks, "block")}, ${counted(snapshot.threads.length, "comment thread")}, ${counted(snapshot.suggestions.length, "open suggestion")}.`;
+    return `Read “${snapshot.title}” as ${snapshot.account}: ${countOf(blocks, "block")}, ${countOf(snapshot.threads.length, "comment thread")}, ${countOf(snapshot.suggestions.length, "open suggestion")}.`;
   },
 };
 

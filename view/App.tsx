@@ -60,11 +60,32 @@ function ChangeCard({ change, focused, onFocus }: { change: Change; focused: boo
   );
 }
 
+/** What the agent hears when the user asks it to reply to a comment thread, saying what the reply should get across. */
+export function replyRequest(thread: Thread, words: string) {
+  const posts = thread.posts.filter(({ content }) => content).map((post) => `${post.author}: “${post.content}”`);
+  const example = { op: "reply", thread: thread.id, text: "…", resolve: false };
+  return [
+    `Write a reply to comment thread ${thread.id}${thread.quote ? ` on “${thread.quote}”` : ""}:`,
+    ...posts.map((post) => `- ${post}`),
+    `What the reply should say: ${words.trim()}`,
+    `Propose it with apply, e.g. ${JSON.stringify(example)} (resolve: true if it settles the thread); I approve it in the view before it goes to the doc.`,
+  ].join("\n");
+}
+
+type Replying = { by: "you" | "agent"; text: string } | null;
+
 function ThreadCard({ thread, focused, onFocus }: { thread: Thread; focused: boolean; onFocus(id: string | null): void }) {
-  const [reply, setReply] = useState<string | null>(null);
-  const send = (resolve: boolean) => {
-    mirador().apply({ op: "reply", thread: thread.id, text: reply, resolve });
-    setReply(null);
+  const [replying, setReplying] = useState<Replying>(null);
+  const [asked, setAsked] = useState(false);
+  const words = replying?.text.trim() ?? "";
+  const reply = (resolve: boolean) => {
+    mirador().apply({ op: "reply", thread: thread.id, text: replying!.text, resolve });
+    setReplying(null);
+  };
+  const askTheAgent = async () => {
+    await mirador().prompt(replyRequest(thread, replying!.text));
+    setReplying(null);
+    setAsked(true);
   };
   return (
     <li className={["thread", thread.status, focused && "focused"].filter(Boolean).join(" ")} data-thread={thread.id} onMouseEnter={() => onFocus(thread.id)} onMouseLeave={() => onFocus(null)}>
@@ -76,22 +97,40 @@ function ThreadCard({ thread, focused, onFocus }: { thread: Thread; focused: boo
       ))}
       {thread.status === "resolved" ? (
         <div className="badge">Resolved</div>
-      ) : reply === null ? (
-        <div className="row">
-          <button onClick={() => setReply("")}>Reply</button>
-          <button onClick={() => mirador().apply({ op: "resolve", thread: thread.id })}>Resolve</button>
-        </div>
+      ) : replying === null ? (
+        <>
+          {asked && <div className="quiet">Asked the agent; its reply shows in Pending changes.</div>}
+          <div className="row">
+            <button onClick={() => setReplying({ by: "you", text: "" })}>Reply</button>
+            <button onClick={() => setReplying({ by: "agent", text: "" })}>Ask the agent to reply</button>
+            <button onClick={() => mirador().apply({ op: "resolve", thread: thread.id })}>Resolve</button>
+          </div>
+        </>
       ) : (
         <div className="reply">
-          <textarea aria-label="Reply" autoFocus value={reply} onChange={(event) => setReply(event.target.value)} />
+          <textarea
+            aria-label={replying.by === "you" ? "Reply" : "What should the reply say?"}
+            placeholder={replying.by === "agent" ? "What should the reply say? The agent writes it." : undefined}
+            autoFocus
+            value={replying.text}
+            onChange={(event) => setReplying({ ...replying, text: event.target.value })}
+          />
           <div className="row">
-            <button className="primary" disabled={!reply.trim()} onClick={() => send(false)}>
-              Reply
-            </button>
-            <button disabled={!reply.trim()} onClick={() => send(true)}>
-              Reply and resolve
-            </button>
-            <button onClick={() => setReply(null)}>Cancel</button>
+            {replying.by === "you" ? (
+              <>
+                <button className="primary" disabled={!words} onClick={() => reply(false)}>
+                  Reply
+                </button>
+                <button disabled={!words} onClick={() => reply(true)}>
+                  Reply and resolve
+                </button>
+              </>
+            ) : (
+              <button className="primary" disabled={!words} onClick={askTheAgent}>
+                Ask the agent
+              </button>
+            )}
+            <button onClick={() => setReplying(null)}>Cancel</button>
           </div>
         </div>
       )}

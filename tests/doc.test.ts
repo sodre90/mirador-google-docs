@@ -218,3 +218,17 @@ describe("describing the doc for the agent", () => {
     expect(describeDocument(newDocument())).toStartWith("No doc is linked yet.");
   });
 });
+
+describe("a doc as Google really sends it", () => {
+  test("reads both tabs of the live test doc, its heading and its thread, with the indexes Google gave", async () => {
+    const live = snapshotOf(await Bun.file(`${import.meta.dir}/fixtures/live-two-tabs.json`).json(), "ana@example.com", 0);
+    expect(live.tabs.map(({ title, blocks }) => [title, blocks.map((block) => (block.kind === "paragraph" ? block.text : block.id))])).toEqual([
+      ["Tab 1", ["Launch plan", "The launch is planned by Q3 🚀.", "We ship by Q3 and review by Q3.", "Owner: Ana", ""]],
+      ["Notes", ["Open questions by Q3", "Who reviews the budget?", ""]],
+    ]);
+    expect(paragraph(live, "p1").style).toBe("HEADING_1");
+    expect(paragraph(live, "p2").startIndex).toBe(13);
+    expect(paragraph(live, "p6").startIndex).toBe(1);
+    expect(live.threads).toMatchObject([{ quote: "launch", status: "open", posts: [{ author: "Ana", content: "Which launch?" }] }]);
+  });
+});

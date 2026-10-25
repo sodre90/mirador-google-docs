@@ -139,10 +139,20 @@ test("the agent proposes edits to a Google doc shown in Mirador; you select text
     await expect(view(page).locator('.change[data-change="c2"]')).toContainText("comment on “planned” in p2: “Planned by whom?”");
     await expect(view(page).locator('.change[data-change="c2"] .badge')).toHaveText("Approved");
     const thread = view(page).locator(".thread");
-    await thread.getByRole("button", { name: "Reply" }).click();
+    await thread.getByRole("button", { name: "Reply", exact: true }).click();
     await thread.getByLabel("Reply").fill("The spring launch, yes.");
     await thread.getByRole("button", { name: "Reply and resolve" }).click();
     await expect(view(page).locator('.change[data-change="c3"]')).toContainText("reply to thread doco.thread1: “The spring launch, yes.”, and resolve it");
+  });
+
+  await test.step("you ask the agent to reply to a thread; it hears the thread and what the reply should say", async () => {
+    const thread = view(page).locator(".thread");
+    await thread.getByRole("button", { name: "Ask the agent to reply" }).click();
+    await thread.getByLabel("What should the reply say?").fill("Say it's the spring one, and thank Ana");
+    await thread.getByRole("button", { name: "Ask the agent", exact: true }).click();
+    await expect(thread).toContainText("Asked the agent; its reply shows in Pending changes.");
+    await expect.poll(prompts).toContain("Write a reply to comment thread doco.thread1 on “launch”:\n- Ana: “Which launch?”\n- Ben: “The spring one.”\nWhat the reply should say: Say it's the spring one, and thank Ana");
+    expect(prompts()).toContain('{"op":"reply","thread":"doco.thread1","text":"…","resolve":false}');
   });
 
   await test.step("you approve the agent's change and send everything; it lands as suggestions and comments", async () => {

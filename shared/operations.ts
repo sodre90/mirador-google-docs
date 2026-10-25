@@ -45,6 +45,8 @@ const requireUser = (author: AppAuthor | undefined, what: string) => {
   if (author?.kind !== "you") throw new Error(`Only the user can ${what}, in the view.`);
 };
 
+export const countOf = (count: number, one: string) => `${count} ${count === 1 ? one : `${one}s`}`;
+
 const quoted = (text: string) => `“${text.length > 60 ? `${text.slice(0, 60)}…` : text}”`;
 
 export function changeSummary(change: ChangeBody): string {
@@ -178,7 +180,7 @@ export function applyOperation(document: GoogleDoc, operation: unknown, author?:
       const snapshot = given.snapshot as Snapshot | null;
       if (snapshot !== null && (typeof snapshot !== "object" || !Array.isArray(snapshot.tabs))) throw new Error("pulled takes the snapshot a pull read.");
       const changes = snapshot ? noted(document.changes, snapshot) : document.changes;
-      const counted = snapshot ? `: ${snapshot.tabs.reduce((sum, tab) => sum + tab.blocks.length, 0)} blocks, ${snapshot.threads.length} comment threads` : "";
+      const counted = snapshot ? `: ${countOf(snapshot.tabs.reduce((sum, tab) => sum + tab.blocks.length, 0), "block")}, ${countOf(snapshot.threads.length, "comment thread")}` : "";
       return {
         document: { ...document, snapshot, changes },
         inverse: { op: "pulled", snapshot: document.snapshot },
