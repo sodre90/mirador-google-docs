@@ -1,5 +1,6 @@
 import { locate, type Located } from "./anchor.ts";
 import { isAnchored, type AnchoredChange, type Change, type GoogleDoc, type Snapshot } from "./document.ts";
+import { threadIn } from "./operations.ts";
 
 export interface PushPlan {
   /** Comments and replies, sent first in a plain batch: they don't move any text. */
@@ -8,6 +9,9 @@ export interface PushPlan {
   /** Text edits, sent in one batch as suggestions, from the end of each tab back so no edit moves the next one's place. */
   suggestionRequests: unknown[];
   suggestionChanges: string[];
+  /** Accepting and rejecting suggestions, sent last: accepting one changes the text the edits were placed in. */
+  decisionRequests: unknown[];
+  decisionChanges: string[];
   /** Approved changes that can't be sent, with why. */
   problems: Record<string, string>;
 }
@@ -41,6 +45,11 @@ function editRequests({ change, located }: Placed): unknown[] {
   }
 }
 
+function decisionRequest(change: Extract<Change, { kind: "accept" | "reject" }>, fresh: Snapshot): unknown | string {
+  if (!fresh.suggestions.some(({ id }) => id === change.suggestion)) return "The suggestion isn't open in the doc any more.";
+  return change.kind === "accept" ? { acceptSuggestion: { suggestionId: change.suggestion } } : { rejectSuggestion: { suggestionId: change.suggestion } };
+}
+
 function commentRequests(change: Change, fresh: Snapshot): unknown[] | string {
   if (change.kind === "comment") {
     const located = locate(change.anchor, fresh);
@@ -48,7 +57,7 @@ function commentRequests(change: Change, fresh: Snapshot): unknown[] | string {
     return [{ insertComment: { content: change.text, range: { startIndex: located.startIndex, endIndex: located.endIndex, tabId: located.tab.id } } }];
   }
   if (change.kind !== "reply" && change.kind !== "resolve") return [];
-  if (!fresh.threads.some(({ id }) => id === change.thread)) return "Its comment thread isn't in the doc any more.";
+  if (!threadIn(fresh, change.thread)) return "Its comment thread or suggestion isn't in the doc any more.";
   const resolve = { addCommentReply: { commentId: change.thread, post: { commentAction: "RESOLVE" } } };
   if (change.kind === "resolve") return [resolve];
   return [{ addCommentReply: { commentId: change.thread, post: { content: change.text } } }, ...(change.resolve ? [resolve] : [])];
@@ -56,9 +65,17 @@ function commentRequests(change: Change, fresh: Snapshot): unknown[] | string {
 
 /** What sending the approved changes to the doc as it is now takes: each change's quote is found again in `fresh`. */
 export function planPush(document: GoogleDoc, fresh: Snapshot): PushPlan {
-  const plan: PushPlan = { commentRequests: [], commentChanges: [], suggestionRequests: [], suggestionChanges: [], problems: {} };
+  const plan: PushPlan = { commentRequests: [], commentChanges: [], suggestionRequests: [], suggestionChanges: [], decisionRequests: [], decisionChanges: [], problems: {} };
   const approved = document.changes.filter(({ approved }) => approved);
-  for (const change of approved.filter((change) => change.kind === "comment" || !isAnchored(change))) {
+  for (const change of approved.filter((change) => change.kind === "accept" || change.kind === "reject")) {
+    const request = decisionRequest(change as Extract<Change, { kind: "accept" | "reject" }>, fresh);
+    if (typeof request === "string") plan.problems[change.id] = request;
+    else {
+      plan.decisionRequests.push(request);
+      plan.decisionChanges.push(change.id);
+    }
+  }
+  for (const change of approved.filter((change) => change.kind === "comment" || change.kind === "reply" || change.kind === "resolve")) {
     const requests = commentRequests(change, fresh);
     if (typeof requests === "string") plan.problems[change.id] = requests;
     else {

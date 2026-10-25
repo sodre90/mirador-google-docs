@@ -42,7 +42,7 @@ export interface GoogleDocument {
   revisionId: string;
   tabs?: GoogleTab[];
   comments?: { commentId: string; plainTextQuote?: string; status?: string; headPost: GooglePost; replies?: GooglePost[] }[];
-  suggestions?: { suggestionId: string; summaryText?: string; status?: string; headPost?: GooglePost }[];
+  suggestions?: { suggestionId: string; summaryText?: string; status?: string; headPost?: GooglePost; replies?: GooglePost[] }[];
 }
 
 /** The query documents.get takes for a pull: every tab, suggestions inline, and the comment threads. */
@@ -127,6 +127,11 @@ export function snapshotOf(document: GoogleDocument, account: string, pulledAt: 
   }));
   const suggestions: GoogleSuggestion[] = (document.suggestions ?? [])
     .filter((suggestion) => (suggestion.status ?? "OPEN") === "OPEN")
-    .map((suggestion) => ({ id: suggestion.suggestionId, summary: suggestion.summaryText ?? "", author: suggestion.headPost?.author?.displayName ?? "Someone" }));
+    .map((suggestion) => ({
+      id: suggestion.suggestionId,
+      summary: suggestion.summaryText ?? "",
+      author: suggestion.headPost?.author?.displayName ?? "Someone",
+      posts: (suggestion.replies ?? []).map(postOf),
+    }));
   return { title: document.title, revisionId: document.revisionId, account, pulledAt, tabs, threads, suggestions };
 }

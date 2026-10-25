@@ -13,7 +13,7 @@ interface Props {
 
 function TextPiece({ piece, focused, onFocus }: { piece: Extract<Piece, { kind: "text" }>; focused: string | null; onFocus: Props["onFocus"] }) {
   const { run, mark } = piece;
-  const classes = [run.bold && "bold", run.italic && "italic", run.underline && "underline", run.strikethrough && "strike", run.inserted && "their-insertion", run.deleted && "their-deletion", run.object && "object", mark && `mark-${mark.kind}`, mark && mark.id === focused && "focused"].filter(Boolean).join(" ");
+  const classes = [run.bold && "bold", run.italic && "italic", run.underline && "underline", run.strikethrough && "strike", run.inserted && "their-insertion", run.deleted && "their-deletion", run.object && "object", mark && `mark-${mark.kind}`, (mark?.id === focused || (focused !== null && (run.inserted ?? run.deleted)?.includes(focused))) && "focused"].filter(Boolean).join(" ");
   const text = run.object ? "▣".repeat(piece.text.length) : piece.text;
   return (
     <span className={classes || undefined} data-start={piece.start} data-mark={mark?.id} title={run.link} onMouseEnter={mark && (() => onFocus(mark.id))} onMouseLeave={mark && (() => onFocus(null))}>

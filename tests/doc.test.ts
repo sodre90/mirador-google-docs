@@ -71,7 +71,7 @@ describe("reading a Google doc", () => {
       ["10k", ["suggest.a"]],
       ["5k", ["suggest.a"]],
     ]);
-    expect(read.suggestions).toEqual([{ id: "suggest.a", summary: "Replace: “5k” with “10k”", author: "Ben" }]);
+    expect(read.suggestions).toEqual([{ id: "suggest.a", summary: "Replace: “5k” with “10k”", author: "Ben", posts: [] }]);
     expect(read.threads).toEqual([
       {
         id: "doco.thread1",
@@ -128,7 +128,7 @@ describe("operations", () => {
       ["c2", "you", true],
     ]);
     expect(() => applyOperation(document, { op: "drop", change: "c1" }, agent)).toThrow("c1 is the user's own; only they can drop it.");
-    expect(() => applyOperation(document, { op: "reply", thread: "doco.nope", text: "Hi" }, agent)).toThrow("There's no comment thread doco.nope");
+    expect(() => applyOperation(document, { op: "reply", thread: "doco.nope", text: "Hi" }, agent)).toThrow("There's no comment thread or suggestion doco.nope");
   });
 
   test("an approved change the agent brings back after a drop or a send comes back unapproved", () => {
@@ -202,6 +202,39 @@ describe("sending", () => {
     const plan = planPush(document, snapshotOf(editedFixture((text) => text.replace("plan", "date"), "Launch plan"), "a", 0));
     expect(plan.suggestionChanges).toEqual(["c1"]);
     expect(plan.problems).toEqual({ c2: "It touches the same text as c1; send that one first, then this one again.", c3: '" plan" isn\'t in the doc any more where it was.' });
+  });
+});
+
+describe("suggestions in the doc", () => {
+  test("you accept, reject or reply to one; it goes last on Send, after the edits placed in the text it changes", () => {
+    const document = applied(
+      linked(),
+      [{ op: "reject", suggestion: "suggest.a" }, agent],
+      [{ op: "reply", thread: "suggest.a", text: "10k is too much" }, you],
+      [{ op: "replace", block: "p2", quote: "by Q3", with: "soon" }, agent],
+      [{ op: "approve-all" }, you],
+    );
+    expect(document.changes.map(({ id, kind, by }) => [id, kind, by])).toEqual([
+      ["c1", "reject", "agent"],
+      ["c2", "reply", "you"],
+      ["c3", "replace", "agent"],
+    ]);
+    const plan = planPush(document, snapshot());
+    expect(plan.commentRequests).toEqual([{ addCommentReply: { commentId: "suggest.a", post: { content: "10k is too much" } } }]);
+    expect(plan.suggestionChanges).toEqual(["c3"]);
+    expect(plan.decisionChanges).toEqual(["c1"]);
+    expect(plan.decisionRequests).toEqual([{ rejectSuggestion: { suggestionId: "suggest.a" } }]);
+    const accepted = applied(linked(), [{ op: "accept", suggestion: "suggest.a" }, you]);
+    expect(planPush(accepted, snapshot()).decisionRequests).toEqual([{ acceptSuggestion: { suggestionId: "suggest.a" } }]);
+  });
+
+  test("refuse a suggestion that isn't open, and resolving one, which is for comments", () => {
+    expect(() => applyOperation(linked(), { op: "accept", suggestion: "suggest.zz" }, you)).toThrow("There's no open suggestion suggest.zz");
+    expect(() => applyOperation(linked(), { op: "resolve", thread: "suggest.a" }, you)).toThrow("suggest.a is a suggestion: accept or reject it instead");
+    const gone = { ...snapshot(), suggestions: [] };
+    const document = applied(linked(), [{ op: "accept", suggestion: "suggest.a" }, you]);
+    expect(planPush(document, gone).problems).toEqual({ c1: "The suggestion isn't open in the doc any more." });
+    expect(describeDocument(linked())).toContain("Suggestions in the doc:\n- suggest.a by Ben: Replace: “5k” with “10k”");
   });
 });
 

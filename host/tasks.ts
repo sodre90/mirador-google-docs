@@ -69,13 +69,23 @@ export const push: AppTask<GoogleDoc> = {
         failure = (error as Error).message;
       }
     }
+    if (plan.decisionRequests.length && !failure) {
+      progress(null, "Accepting and rejecting suggestions");
+      try {
+        await batchUpdate(token, document.documentId!, { requests: plan.decisionRequests }, signal);
+        sent.push(...plan.decisionChanges);
+      } catch (error) {
+        if (!sent.length) throw error;
+        failure = (error as Error).message;
+      }
+    }
     await apply({ op: "sent", changes: sent, problems: plan.problems });
     progress(null, "Reading the doc again");
     await apply({ op: "pulled", snapshot: (await read({ ...document, snapshot: fresh }, signal)).snapshot });
     const kept = Object.keys(plan.problems);
     return [
       `Sent ${sent.length ? sent.join(", ") : "nothing"}${plan.suggestionChanges.length && !failure ? "; the edits are suggestions in the doc now" : ""}.`,
-      failure && `The edits weren't sent: ${failure}`,
+      failure && `The rest wasn't sent: ${failure}`,
       kept.length ? `${kept.join(", ")} stayed pending: ${kept.map((id) => `${id}: ${plan.problems[id]}`).join(" ")}` : null,
     ]
       .filter(Boolean)

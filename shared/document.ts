@@ -58,10 +58,13 @@ export interface Thread {
   posts: Post[];
 }
 
+/** A suggestion in the doc, made in Docs' suggesting mode by anyone, the user included; it has a thread like a comment's. */
 export interface GoogleSuggestion {
   id: string;
   summary: string;
   author: string;
+  /** The replies on its thread. */
+  posts: Post[];
 }
 
 /** The doc as the latest pull read it. */
@@ -90,7 +93,9 @@ export type ChangeBody =
   | { kind: "delete"; anchor: Anchor }
   | { kind: "comment"; anchor: Anchor; text: string }
   | { kind: "reply"; thread: string; text: string; resolve: boolean }
-  | { kind: "resolve"; thread: string };
+  | { kind: "resolve"; thread: string }
+  | { kind: "accept"; suggestion: string }
+  | { kind: "reject"; suggestion: string };
 
 export type Change = ChangeBody & {
   id: string;

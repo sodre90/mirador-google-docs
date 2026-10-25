@@ -19,6 +19,7 @@ export const OPERATIONS_HELP = [
   '- { "op": "comment", "block": "p12", "quote": "launch", "text": "Which launch?" }',
   '- { "op": "reply", "thread": "<thread id>", "text": "Done.", "resolve": true }',
   '- { "op": "resolve", "thread": "<thread id>" }',
+  '- { "op": "accept", "suggestion": "<suggestion id>" } or { "op": "reject", … }: a suggestion in the doc; "reply" takes a suggestion id as its thread too',
   '- { "op": "drop", "change": "c3" }: takes back a pending change',
   "Your changes wait for the user to approve them; only the user sends them to Google Docs, where they arrive as suggestions.",
 ].join("\n");
@@ -63,6 +64,10 @@ export function changeSummary(change: ChangeBody): string {
       return `reply to thread ${change.thread}: ${quoted(change.text)}${change.resolve ? ", and resolve it" : ""}`;
     case "resolve":
       return `resolve thread ${change.thread}`;
+    case "accept":
+      return `accept suggestion ${change.suggestion}`;
+    case "reject":
+      return `reject suggestion ${change.suggestion}`;
   }
 }
 
@@ -70,7 +75,14 @@ function bodyOf(operation: Operation, snapshot: Snapshot): ChangeBody {
   const anchor = (quoteField: string) => anchorIn(snapshot, string(operation, "block"), string(operation, quoteField), optionalNumber(operation, "at"));
   const thread = () => {
     const id = string(operation, "thread");
-    if (!snapshot.threads.some((candidate) => candidate.id === id)) throw new Error(`There's no comment thread ${id}; app_state lists them.`);
+    const isSuggestion = snapshot.suggestions.some((candidate) => candidate.id === id);
+    if (!snapshot.threads.some((candidate) => candidate.id === id) && !isSuggestion) throw new Error(`There's no comment thread or suggestion ${id}; app_state lists them.`);
+    if (isSuggestion && operation.op === "resolve") throw new Error(`${id} is a suggestion: accept or reject it instead of resolving it.`);
+    return id;
+  };
+  const suggestion = () => {
+    const id = string(operation, "suggestion");
+    if (!snapshot.suggestions.some((candidate) => candidate.id === id)) throw new Error(`There's no open suggestion ${id}; app_state lists them.`);
     return id;
   };
   switch (operation.op) {
@@ -97,11 +109,15 @@ function bodyOf(operation: Operation, snapshot: Snapshot): ChangeBody {
     }
     case "resolve":
       return { kind: "resolve", thread: thread() };
+    case "accept":
+      return { kind: "accept", suggestion: suggestion() };
+    case "reject":
+      return { kind: "reject", suggestion: suggestion() };
   }
   throw new Error(`Unknown operation ${JSON.stringify(operation.op)}. ${OPERATIONS_HELP}`);
 }
 
-const PROPOSALS = new Set(["replace", "insert", "delete", "comment", "reply", "resolve"]);
+const PROPOSALS = new Set(["replace", "insert", "delete", "comment", "reply", "resolve", "accept", "reject"]);
 
 function propose(document: GoogleDoc, operation: Operation, author: AppAuthor | undefined): Applied {
   const body = bodyOf(operation, requireSnapshot(document));
@@ -160,10 +176,14 @@ function noted(changes: Change[], snapshot: Snapshot): Change[] {
       const found = locate(change.anchor, snapshot);
       return "problem" in found ? { ...rest, note: found.problem } : (rest as Change);
     }
-    const threadMissing = !snapshot.threads.some(({ id }) => id === (change as { thread: string }).thread);
-    return threadMissing ? { ...rest, note: "Its comment thread isn't in the doc any more." } : (rest as Change);
+    return threadIdOf(change) && !threadIn(snapshot, threadIdOf(change)!) ? { ...rest, note: "Its comment thread or suggestion isn't in the doc any more." } : (rest as Change);
   });
 }
+
+/** The comment thread or suggestion a change replies to, resolves, accepts or rejects. */
+export const threadIdOf = (change: Change): string | null => ("thread" in change ? change.thread : "suggestion" in change ? change.suggestion : null);
+
+export const threadIn = (snapshot: Snapshot, id: string) => snapshot.threads.some((thread) => thread.id === id) || snapshot.suggestions.some((suggestion) => suggestion.id === id);
 
 export function applyOperation(document: GoogleDoc, operation: unknown, author?: AppAuthor): Applied {
   if (typeof operation !== "object" || operation === null) throw new Error(`An operation is an object. ${OPERATIONS_HELP}`);

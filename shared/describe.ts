@@ -27,7 +27,7 @@ function snapshotText(snapshot: Snapshot) {
   const hasMarks = snapshot.tabs.some((tab) => tab.blocks.some((block) => block.kind === "paragraph" && block.runs.some((run) => run.inserted || run.deleted)));
   const hasObjects = snapshot.tabs.some((tab) => tab.blocks.some((block) => block.kind === "paragraph" && block.text.includes(OBJECT_MARK)));
   const notes = [
-    hasMarks && "Text in [+…+] and [-…-] is other people's open suggestions; a quote includes their text but not the brackets.",
+    hasMarks && "Text in [+…+] and [-…-] is the doc's open suggestions; a quote includes their text but not the brackets.",
     hasObjects && `[object] is an image or chip; in a quote it is the character ${JSON.stringify(OBJECT_MARK)}.`,
   ].filter(Boolean);
   const tabs = snapshot.tabs.map((tab) => [snapshot.tabs.length > 1 ? `Tab “${tab.title}”:` : null, ...tab.blocks.map(blockLine)].filter(Boolean).join("\n"));
@@ -37,7 +37,9 @@ function snapshotText(snapshot: Snapshot) {
         ...snapshot.threads.map((thread) => `- ${thread.id} (${thread.status}) on “${thread.quote}”: ${thread.posts.map((post) => (post.action && !post.content ? `${post.author} ${post.action}d it` : `${post.author}: “${post.content}”`)).join("; ")}`),
       ].join("\n")
     : "No comment threads.";
-  const suggestions = snapshot.suggestions.length ? `Open suggestions by others: ${snapshot.suggestions.map((suggestion) => `${suggestion.author}: ${suggestion.summary}`).join("; ")}` : null;
+  const suggestions = snapshot.suggestions.length
+    ? ["Suggestions in the doc:", ...snapshot.suggestions.map((suggestion) => `- ${suggestion.id} by ${suggestion.author}: ${suggestion.summary}${suggestion.posts.length ? `; ${suggestion.posts.map((post) => `${post.author}: “${post.content}”`).join("; ")}` : ""}`)].join("\n")
+    : null;
   return [`“${snapshot.title}”, read ${read} UTC as ${snapshot.account}.`, ...notes, ...tabs, threads, suggestions].filter(Boolean).join("\n\n");
 }
 

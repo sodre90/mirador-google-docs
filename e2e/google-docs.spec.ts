@@ -201,6 +201,25 @@ test("the agent proposes edits to a Google doc shown in Mirador; you select text
     ]);
   });
 
+  await test.step("you accept a suggestion in the doc and ask the agent to reply to it; Send accepts it in Docs", async () => {
+    google.batches.length = 0;
+    const suggestion = view(page).locator('.suggestion[data-suggestion="suggest.a"]');
+    await expect(suggestion).toContainText("Ben");
+    await expect(suggestion).toContainText("Replace: “5k” with “10k”");
+    await suggestion.hover();
+    await expect(view(page).locator('[data-block="p5"] .focused')).toHaveText(["10k", "5k"]);
+    await suggestion.getByRole("button", { name: "Ask the agent to reply" }).click();
+    await suggestion.getByLabel("What should the reply say?").fill("Say 10k is fine");
+    await suggestion.getByRole("button", { name: "Ask the agent", exact: true }).click();
+    await expect.poll(prompts).toContain("Write a reply to Ben's suggestion suggest.a (Replace: “5k” with “10k”):\nWhat the reply should say: Say 10k is fine");
+    expect(prompts()).toContain('{"op":"reply","thread":"suggest.a","text":"…"}');
+    await suggestion.getByRole("button", { name: "Accept" }).click();
+    await expect(view(page).locator('.change[data-change="c7"]')).toContainText("accept suggestion suggest.a");
+    await view(page).getByRole("button", { name: "Send to Google Docs (1)" }).click();
+    await expect(view(page).locator(".task.done")).toHaveText("Sent c7.");
+    expect(google.batches).toEqual([{ requests: [{ acceptSuggestion: { suggestionId: "suggest.a" } }] }]);
+  });
+
   await test.step("you sign in another Google account from the view", async () => {
     writeFileSync(join(gcloud.folder, "next-sign-in"), "ana@work.example.com\n");
     await view(page).getByRole("button", { name: "Sign in a Google account" }).click();
