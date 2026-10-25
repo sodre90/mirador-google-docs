@@ -1,0 +1,321 @@
+{
+ "documentId": "1testDocumentIdForMiradorGoogleDocs",
+ "title": "Launch plan",
+ "revisionId": "rev-1",
+ "tabs": [
+  {
+   "tabProperties": {
+    "tabId": "t.0",
+    "title": "Plan",
+    "index": 0
+   },
+   "documentTab": {
+    "body": {
+     "content": [
+      {
+       "endIndex": 1,
+       "sectionBreak": {}
+      },
+      {
+       "startIndex": 1,
+       "endIndex": 13,
+       "paragraph": {
+        "elements": [
+         {
+          "startIndex": 1,
+          "endIndex": 13,
+          "textRun": {
+           "content": "Launch plan\n",
+           "textStyle": {}
+          }
+         }
+        ],
+        "paragraphStyle": {
+         "namedStyleType": "HEADING_1"
+        }
+       }
+      },
+      {
+       "startIndex": 13,
+       "endIndex": 45,
+       "paragraph": {
+        "elements": [
+         {
+          "startIndex": 13,
+          "endIndex": 17,
+          "textRun": {
+           "content": "The ",
+           "textStyle": {}
+          }
+         },
+         {
+          "startIndex": 17,
+          "endIndex": 23,
+          "textRun": {
+           "content": "launch",
+           "textStyle": {
+            "bold": true
+           }
+          }
+         },
+         {
+          "startIndex": 23,
+          "endIndex": 45,
+          "textRun": {
+           "content": " is planned by Q3 🚀.\n",
+           "textStyle": {}
+          }
+         }
+        ],
+        "paragraphStyle": {
+         "namedStyleType": "NORMAL_TEXT"
+        }
+       }
+      },
+      {
+       "startIndex": 45,
+       "endIndex": 58,
+       "paragraph": {
+        "elements": [
+         {
+          "startIndex": 45,
+          "endIndex": 46,
+          "inlineObjectElement": {
+           "inlineObjectId": "kix.img"
+          }
+         },
+         {
+          "startIndex": 46,
+          "endIndex": 58,
+          "textRun": {
+           "content": " Owner: Ana\n",
+           "textStyle": {}
+          }
+         }
+        ],
+        "paragraphStyle": {
+         "namedStyleType": "NORMAL_TEXT"
+        },
+        "bullet": {
+         "listId": "kix.list",
+         "nestingLevel": 0
+        }
+       }
+      },
+      {
+       "startIndex": 58,
+       "endIndex": 72,
+       "table": {
+        "rows": 1,
+        "columns": 2,
+        "tableRows": [
+         {
+          "tableCells": [
+           {
+            "startIndex": 60,
+            "endIndex": 65,
+            "content": [
+             {
+              "startIndex": 61,
+              "endIndex": 66,
+              "paragraph": {
+               "elements": [
+                {
+                 "startIndex": 61,
+                 "endIndex": 66,
+                 "textRun": {
+                  "content": "Risk\n",
+                  "textStyle": {}
+                 }
+                }
+               ],
+               "paragraphStyle": {
+                "namedStyleType": "NORMAL_TEXT"
+               }
+              }
+             }
+            ]
+           },
+           {
+            "startIndex": 66,
+            "endIndex": 70,
+            "content": [
+             {
+              "startIndex": 67,
+              "endIndex": 71,
+              "paragraph": {
+               "elements": [
+                {
+                 "startIndex": 67,
+                 "endIndex": 71,
+                 "textRun": {
+                  "content": "Low\n",
+                  "textStyle": {}
+                 }
+                }
+               ],
+               "paragraphStyle": {
+                "namedStyleType": "NORMAL_TEXT"
+               }
+              }
+             }
+            ]
+           }
+          ]
+         }
+        ]
+       }
+      },
+      {
+       "startIndex": 72,
+       "endIndex": 104,
+       "paragraph": {
+        "elements": [
+         {
+          "startIndex": 72,
+          "endIndex": 104,
+          "textRun": {
+           "content": "We ship by Q3 and review by Q3.\n",
+           "textStyle": {}
+          }
+         }
+        ],
+        "paragraphStyle": {
+         "namedStyleType": "NORMAL_TEXT"
+        }
+       }
+      },
+      {
+       "startIndex": 104,
+       "endIndex": 118,
+       "paragraph": {
+        "elements": [
+         {
+          "startIndex": 104,
+          "endIndex": 112,
+          "textRun": {
+           "content": "Budget: ",
+           "textStyle": {}
+          }
+         },
+         {
+          "startIndex": 112,
+          "endIndex": 115,
+          "textRun": {
+           "content": "10k",
+           "textStyle": {},
+           "suggestedInsertionIds": [
+            "suggest.a"
+           ]
+          }
+         },
+         {
+          "startIndex": 115,
+          "endIndex": 117,
+          "textRun": {
+           "content": "5k",
+           "textStyle": {},
+           "suggestedDeletionIds": [
+            "suggest.a"
+           ]
+          }
+         },
+         {
+          "startIndex": 117,
+          "endIndex": 118,
+          "textRun": {
+           "content": "\n",
+           "textStyle": {}
+          }
+         }
+        ],
+        "paragraphStyle": {
+         "namedStyleType": "NORMAL_TEXT"
+        }
+       }
+      }
+     ]
+    }
+   },
+   "childTabs": [
+    {
+     "tabProperties": {
+      "tabId": "t.1",
+      "title": "Notes",
+      "index": 0
+     },
+     "documentTab": {
+      "body": {
+       "content": [
+        {
+         "endIndex": 1,
+         "sectionBreak": {}
+        },
+        {
+         "startIndex": 1,
+         "endIndex": 13,
+         "paragraph": {
+          "elements": [
+           {
+            "startIndex": 1,
+            "endIndex": 13,
+            "textRun": {
+             "content": "Notes by Q3\n",
+             "textStyle": {}
+            }
+           }
+          ],
+          "paragraphStyle": {
+           "namedStyleType": "NORMAL_TEXT"
+          }
+         }
+        }
+       ]
+      }
+     }
+    }
+   ]
+  }
+ ],
+ "comments": [
+  {
+   "commentId": "doco.thread1",
+   "anchorId": "kix.a1",
+   "status": "OPEN",
+   "plainTextQuote": "launch",
+   "headPost": {
+    "postId": "doco.thread1",
+    "content": "Which launch?",
+    "author": {
+     "displayName": "Ana"
+    },
+    "createTime": "2026-10-20T10:00:00Z",
+    "commentAction": "NO_COMMENT_ACTION_CHANGE"
+   },
+   "replies": [
+    {
+     "postId": "doco.r1",
+     "content": "The spring one.",
+     "author": {
+      "displayName": "Ben"
+     },
+     "createTime": "2026-10-20T11:00:00Z"
+    }
+   ]
+  }
+ ],
+ "suggestions": [
+  {
+   "suggestionId": "suggest.a",
+   "status": "OPEN",
+   "summaryText": "Replace: “5k” with “10k”",
+   "headPost": {
+    "author": {
+     "displayName": "Ben"
+    }
+   }
+  }
+ ],
+ "suggestionsViewMode": "SUGGESTIONS_INLINE",
+ "commentsViewMode": "COMMENTS_VIEW_MODE_INCLUDED"
+}

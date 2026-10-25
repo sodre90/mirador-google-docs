@@ -1,0 +1,30 @@
+# Google Docs for Mirador
+
+A Mirador app plugin (plugin API 4) for editing Google Docs with the agent. The doc shows in a canvas tab as a doc. The agent proposes changes there, you approve each one, and only you send them to Google Docs, where they arrive as suggestions.
+
+## What it does
+
+- **The agent opens a doc:** it writes a link file such as `notes/launch-plan.gdoc` (or applies `{ "op": "link", "url": "…" }`), opens the app on it and runs the task `pull`. `app_state` gives the doc as text: paragraphs with ids such as `p12`, headings, tables (read only), other people's open suggestions and the comment threads.
+- **The agent proposes changes** anchored by a quote of the paragraph's text: `replace`, `insert`, `delete`, a new `comment`, a `reply` to a thread, `resolve`. They show in the doc, struck through and in green, and wait in the list beside it.
+- **You select text** in the doc and either ask the agent to change it (it hears the quote, where it is and your words) or comment on it.
+- **You approve** each change, or all of them, and press **Send to Google Docs**. The plugin reads the doc again and finds each quote anew, so collaborators' edits in the meantime don't matter. It sends comments and replies first, then the text edits in one batch as suggestions (`writeMode: SUGGEST`, `targetRevisionId`). A change whose text it can't find any more stays pending, with a note.
+
+**The `.gdoc` file holds the doc's whole text**, its comments and the account that read it, next to your other files. In a workspace under git, add `*.gdoc` to its `.gitignore` before opening a work doc, so it can't be committed by accident.
+
+The agent can't approve or send: `apply` refuses `approve` from anyone but you (plugin API 4 tells a plugin who made a change), and the `push` task refuses to run for the agent.
+
+## Signing in
+
+**Sign in a Google account** runs `gcloud auth login --enable-gdrive-access` with its own config folder, `~/.mirador/google-docs/gcloud`, apart from your own gcloud sign-in. It needs the Google Cloud CLI, and no OAuth client of your own. Sign in as many accounts as you like: a pull tries each until one can open the doc. Suggestions and comments show in Docs as the signed-in account's.
+
+## Developing
+
+```bash
+bun install
+bun run typecheck
+bun run test          # unit tests, with a fake gcloud and a fake Docs API
+scripts/e2e.sh        # in a Mirador test host, from the Mirador checkout in MIRADOR_DIR (default ../visualized-claude-sessions)
+bun run build         # dist/view.js, which Mirador serves
+```
+
+`GOOGLE_DOCS_API_URL`, `GOOGLE_DOCS_GCLOUD` and `GOOGLE_DOCS_GCLOUD_CONFIG` point the host code at another Docs API, gcloud program or gcloud config folder.

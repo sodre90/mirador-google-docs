@@ -1,0 +1,10 @@
+{
+  "name": "google-docs",
+  "title": "Google Docs",
+  "api": 4,
+  "app": {
+    "host": "mirador/host.ts",
+    "view": "dist/view.js"
+  },
+  "build": "bun install && bun run build"
+}
