@@ -112,6 +112,23 @@ async function selectAcross(page: Page, from: [block: string, text: string], to:
 
 const select = (page: Page, block: string, text: string) => selectAcross(page, [block, text], [block, text]);
 
+/** Puts the caret right after `text` in a paragraph, as a click there would, ready to type. */
+async function caretAfter(page: Page, block: string, text: string) {
+  await view(page)
+    .locator(`[data-block="${block}"]`)
+    .evaluate((paragraph: HTMLElement, wanted) => {
+      paragraph.focus();
+      const walker = document.createTreeWalker(paragraph, NodeFilter.SHOW_TEXT);
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        const at = node.textContent!.indexOf(wanted);
+        if (at === -1 || node.parentElement!.closest("ins")) continue;
+        getSelection()!.collapse(node, at + wanted.length);
+        return;
+      }
+      throw new Error(`${wanted} isn't in one piece of ${paragraph.textContent}`);
+    }, text);
+}
+
 test("the agent proposes edits to a Google doc shown in Mirador; you select text to ask for more and comment, approve each, and send them as suggestions", async ({ page }) => {
   const conversation = await startWithTheAgent(page);
 
@@ -150,6 +167,7 @@ test("the agent proposes edits to a Google doc shown in Mirador; you select text
   await test.step("you select text and ask the agent to change it; the agent hears the quote, where it is and your words", async () => {
     await select(page, "p4", "We ship");
     const box = view(page).getByRole("dialog", { name: "Selected text" });
+    await box.getByRole("button", { name: "Ask the agent…" }).click();
     await box.getByLabel("What should change here?").fill("Say who ships it");
     await box.getByRole("button", { name: "Ask the agent" }).click();
     await expect(box).toBeHidden();
@@ -160,6 +178,8 @@ test("the agent proposes edits to a Google doc shown in Mirador; you select text
   await test.step("you select across paragraphs and ask the agent about all of it; a comment needs one paragraph", async () => {
     await selectAcross(page, ["p4", "review by Q3."], ["p5", "Budget:"]);
     const box = view(page).getByRole("dialog", { name: "Selected text" });
+    await expect(box.getByRole("button", { name: "Comment…" })).toBeDisabled();
+    await box.getByRole("button", { name: "Ask the agent…" }).click();
     await expect(box.locator(".quote")).toHaveText("“review by Q3. ¶ Budget:”");
     await box.getByLabel("What should change here?").fill("Merge these into one sentence");
     await expect(box.getByRole("button", { name: "Comment" })).toBeDisabled();
@@ -172,6 +192,7 @@ test("the agent proposes edits to a Google doc shown in Mirador; you select text
   await test.step("you comment on a selection and reply to a thread; both are yours, so they're approved already", async () => {
     await select(page, "p2", "planned");
     const box = view(page).getByRole("dialog", { name: "Selected text" });
+    await box.getByRole("button", { name: "Comment…" }).click();
     await box.getByLabel("What should change here?").fill("Planned by whom?");
     await box.getByRole("button", { name: "Comment" }).click();
     await expect(view(page).locator('.change[data-change="c2"]')).toContainText("comment on “planned” in p2: “Planned by whom?”");
@@ -276,6 +297,72 @@ test("the agent proposes edits to a Google doc shown in Mirador; you select text
     await view(page).getByRole("button", { name: "Send to Google Docs (1)" }).click();
     await expect(view(page).locator(".task.done")).toHaveText("Sent c8.");
     expect(google.batches).toEqual([{ requests: [{ acceptSuggestion: { suggestionId: "suggest.a" } }] }]);
+  });
+
+  await test.step("you type in the doc; leaving the paragraph makes one change, and typing there again updates it", async () => {
+    google.batches.length = 0;
+    const p4 = view(page).locator('[data-block="p4"]');
+    await expect(view(page).locator('[data-block="p5"]')).toHaveAttribute("contenteditable", "false");
+    await caretAfter(page, "p4", "ship");
+    await page.keyboard.type(" soon");
+    await view(page).locator("h2").click();
+    await expect(view(page).locator(".change")).toHaveCount(1);
+    await expect(view(page).locator(".change")).toContainText("insert “soon ” after “ship ” in p4");
+    await expect(p4).toHaveText("We ship soon by Q3 and review by Q3.");
+    await expect(p4.locator(".added.mine")).toHaveText("soon ");
+    await caretAfter(page, "p4", "soon");
+    await page.keyboard.type("er");
+    await view(page).locator("h2").click();
+    await expect(view(page).locator(".change")).toHaveCount(1);
+    await expect(view(page).locator('.change[data-change="c10"]')).toContainText("insert “sooner ” after “ship ” in p4");
+    await expect(view(page).locator('.change[data-change="c10"] .badge')).toHaveText("Approved");
+  });
+
+  await test.step("Enter starts a new paragraph, and typing over the agent's change is refused with a note", async () => {
+    await caretAfter(page, "p6", "by Q3");
+    await page.keyboard.press("Enter");
+    await page.keyboard.type("Ask Ben");
+    await view(page).locator("h2").click();
+    await expect(view(page).locator('.change[data-change="c11"]')).toContainText("insert “\nAsk Ben” after “Q3” in p6");
+    await view(page).locator('.change[data-change="c11"]').getByRole("button", { name: "Drop" }).click();
+    await tool(conversation, "apply", { op: { op: "replace", block: "p2", quote: "planned", with: "set" } });
+    await expect(view(page).locator('[data-block="p2"] .mark-deleted')).toHaveText("planned");
+    await caretAfter(page, "p2", "plan");
+    await page.keyboard.type("s");
+    await view(page).locator("h2").click();
+    await expect(view(page).locator(".problem")).toHaveText("The agent's change c12 is on this text: approve or drop it first, then type here. OK");
+    await expect(view(page).locator('[data-block="p2"]')).not.toContainText("plans");
+    await view(page).getByRole("button", { name: "OK" }).click();
+    await view(page).locator('.change[data-change="c12"]').getByRole("button", { name: "Drop" }).click();
+  });
+
+  await test.step("you review beside the text: the stepper opens each change in turn, with Approve and Drop next to it", async () => {
+    await tool(conversation, "apply", { op: { op: "replace", block: "p6", quote: "Notes", with: "Questions" } });
+    await view(page).getByRole("button", { name: "Next change" }).click();
+    await expect(view(page).locator(".stepper")).toContainText("c10 · 1 of 2");
+    await expect(view(page).locator('.change[data-change="c10"]')).toHaveClass(/open/);
+    await expect(view(page).getByRole("dialog", { name: "Change c10" })).toContainText("c10 · You");
+    await view(page).getByRole("button", { name: "Next change" }).click();
+    await expect(view(page).locator(".stepper")).toContainText("c13 · 2 of 2");
+    const beside = view(page).getByRole("dialog", { name: "Change c13" });
+    await expect(beside).toContainText("c13 · Agent");
+    await beside.getByRole("button", { name: "Approve" }).click();
+    await expect(beside.getByRole("button", { name: "Undo approval" })).toBeVisible();
+    await expect(view(page).locator('.change[data-change="c13"] .badge')).toHaveText("Approved");
+  });
+
+  await test.step("with direct edits on, Send puts your edit straight into the doc, then the agent's as a suggestion", async () => {
+    const direct = view(page).getByLabel("My edits go in directly, not as suggestions");
+    await direct.click();
+    await expect(direct).toBeChecked();
+    await expect(view(page).locator('.change[data-change="c10"] .badge.direct')).toHaveText("Goes in directly");
+    await expect(view(page).locator('.change[data-change="c13"] .badge.direct')).toHaveCount(0);
+    await view(page).getByRole("button", { name: "Send to Google Docs (2)" }).click();
+    await expect(view(page).locator(".task.done")).toHaveText("Sent c10, c13; c10 is in the doc; c13 is a suggestion.");
+    expect(google.batches).toEqual([
+      { requests: [{ insertText: { location: { index: expect.any(Number), tabId: "t.0" }, text: "sooner " } }], writeControl: { targetRevisionId: "rev-1" } },
+      { requests: expect.arrayContaining([{ insertText: { location: { index: 1, tabId: "t.1" }, text: "Questions" } }]), writeControl: { writeMode: "SUGGEST", targetRevisionId: "rev-1" } },
+    ]);
   });
 
   await test.step("you sign in another Google account from the view", async () => {

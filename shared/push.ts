@@ -9,6 +9,9 @@ export interface PushPlan {
   /** Text edits, sent in one batch as suggestions, from the end of each tab back so no edit moves the next one's place. */
   suggestionRequests: unknown[];
   suggestionChanges: string[];
+  /** The user's own text edits when they go straight into the doc: sent before the suggestions, which are placed again after them. */
+  directRequests: unknown[];
+  directChanges: string[];
   /** Accepting and rejecting suggestions, sent last: accepting one changes the text the edits were placed in. */
   decisionRequests: unknown[];
   decisionChanges: string[];
@@ -65,7 +68,7 @@ function commentRequests(change: Change, fresh: Snapshot): unknown[] | string {
 
 /** What sending the approved changes to the doc as it is now takes: each change's quote is found again in `fresh`. */
 export function planPush(document: GoogleDoc, fresh: Snapshot): PushPlan {
-  const plan: PushPlan = { commentRequests: [], commentChanges: [], suggestionRequests: [], suggestionChanges: [], decisionRequests: [], decisionChanges: [], problems: {} };
+  const plan: PushPlan = { commentRequests: [], commentChanges: [], suggestionRequests: [], suggestionChanges: [], directRequests: [], directChanges: [], decisionRequests: [], decisionChanges: [], problems: {} };
   const approved = document.changes.filter(({ approved }) => approved);
   const decided = new Map<string, string>();
   for (const change of approved.filter((change) => change.kind === "accept" || change.kind === "reject")) {
@@ -100,7 +103,12 @@ export function planPush(document: GoogleDoc, fresh: Snapshot): PushPlan {
     else placed.push(candidate);
   }
   const lastFirst = placed.toSorted((a, b) => b.from - a.from || b.to - a.to);
-  plan.suggestionRequests = lastFirst.flatMap(editRequests);
-  plan.suggestionChanges = lastFirst.map(({ change }) => change.id);
+  const isDirect = ({ change }: Placed) => document.directEdits && change.by === "you";
+  const direct = lastFirst.filter(isDirect);
+  const suggested = direct.length ? [] : lastFirst;
+  plan.directRequests = direct.flatMap(editRequests);
+  plan.directChanges = direct.map(({ change }) => change.id);
+  plan.suggestionRequests = suggested.flatMap(editRequests);
+  plan.suggestionChanges = suggested.map(({ change }) => change.id);
   return plan;
 }

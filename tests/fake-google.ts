@@ -10,12 +10,14 @@ export interface FakeGoogle {
   /** The doc each account may read, by account; others get 403. */
   readers: Set<string>;
   document: unknown;
+  /** How many more reads succeed before the rest fail as an outage would; null for no limit. */
+  readsLeft: number | null;
   stop(): void;
 }
 
 /** A Docs API that serves one doc to the accounts in `readers`, telling them apart by the fake token gcloud gives each. */
 export function fakeGoogle(document: unknown, readers: string[]): FakeGoogle {
-  const fake: FakeGoogle = { url: "", batches: [], tokens: [], readers: new Set(readers), document, stop: () => server.stop(true) };
+  const fake: FakeGoogle = { url: "", batches: [], tokens: [], readers: new Set(readers), document, readsLeft: null, stop: () => server.stop(true) };
   const server = Bun.serve({
     port: 0,
     async fetch(request) {
@@ -24,7 +26,10 @@ export function fakeGoogle(document: unknown, readers: string[]): FakeGoogle {
       const account = token.replace(/^token-for-/, "");
       if (!fake.readers.has(account)) return Response.json({ error: { message: "The caller does not have permission" } }, { status: 403 });
       const { pathname } = new URL(request.url);
-      if (request.method === "GET" && pathname.startsWith("/v1/documents/")) return Response.json(fake.document);
+      if (request.method === "GET" && pathname.startsWith("/v1/documents/")) {
+        if (fake.readsLeft !== null && fake.readsLeft-- <= 0) return Response.json({ error: { message: "Backend Error" } }, { status: 500 });
+        return Response.json(fake.document);
+      }
       if (request.method === "POST" && pathname.endsWith(":batchUpdate")) {
         fake.batches.push(await request.json());
         return Response.json({ replies: [], writeControl: { requiredRevisionId: "rev-2" } });

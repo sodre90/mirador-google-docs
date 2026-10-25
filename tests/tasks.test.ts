@@ -94,6 +94,25 @@ describe("push", () => {
     expect(after.changes.map(({ id, approved }) => [id, approved])).toEqual([["c3", false]]);
   });
 
+  test("with direct edits on, your edit goes in first; when reading the doc again then fails, it isn't sent twice", async () => {
+    const linked = (await run(pull, checkedDocument({ url: URL }))).document;
+    const document = [
+      [{ op: "direct-edits", on: true }, you],
+      [{ op: "write", block: "p4", text: "We ship by May and review by Q3." }, you],
+      [{ op: "replace", block: "p2", quote: "by Q3", with: "soon" }, agent],
+      [{ op: "approve-all" }, you],
+    ].reduce((current, [operation, author]) => applyOperation(current, operation, author as AppAuthor).document, linked);
+    const both = await run(push, document, you);
+    expect(both.summary).toBe("Sent c1, c2; c1 is in the doc; c2 is a suggestion.");
+    expect(google.batches.map(({ writeControl }) => writeControl)).toEqual([{ targetRevisionId: "rev-1" }, { writeMode: "SUGGEST", targetRevisionId: "rev-1" }]);
+    google.batches.length = 0;
+    google.readsLeft = 1;
+    const cut = await run(push, document, you);
+    expect(cut.summary).toBe("Sent c1; c1 is in the doc. The rest wasn't sent: Google Docs said 500: Backend Error. Reading it again failed (Google Docs said 500: Backend Error): read it again before sending more.");
+    expect(google.batches).toHaveLength(1);
+    expect(cut.document.changes.map(({ id }) => id)).toEqual(["c2"]);
+  });
+
   test("keeps a change whose text a collaborator removed, and sends the others", async () => {
     const document = applyOperation(await approvedChanges(), { op: "approve-all" }, you).document;
     const edited = structuredClone(fixture);

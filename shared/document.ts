@@ -116,9 +116,11 @@ export interface GoogleDoc {
   snapshot: Snapshot | null;
   changes: Change[];
   nextChange: number;
+  /** Whether Send puts the user's own edits of the text straight into the doc, rather than as suggestions like the agent's. */
+  directEdits: boolean;
 }
 
-export const newDocument = (): GoogleDoc => ({ url: null, documentId: null, snapshot: null, changes: [], nextChange: 1 });
+export const newDocument = (): GoogleDoc => ({ url: null, documentId: null, snapshot: null, changes: [], nextChange: 1, directEdits: false });
 
 /** The doc's id in a Google Docs address, or the id itself. */
 export function documentIdOf(url: string): string {
@@ -142,6 +144,7 @@ export function checkedDocument(value: unknown): GoogleDoc {
     snapshot: given.snapshot ? snapshotWithSuggestionPosts(given.snapshot) : null,
     changes: Array.isArray(given.changes) ? given.changes : [],
     nextChange: typeof given.nextChange === "number" ? given.nextChange : 1,
+    directEdits: given.directEdits === true,
   };
 }
 

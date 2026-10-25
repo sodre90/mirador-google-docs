@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import type { AppDocumentState } from "../mirador/api.ts";
 import type { Change, GoogleDoc, GoogleSuggestion, Post, Snapshot, Thread } from "../shared/document.ts";
 import { changeSummary, pendingDecisionOn } from "../shared/operations.ts";
+import { writtenChange } from "../shared/write.ts";
 import { Doc, selectionIn, type Selected, type SelectedPart } from "./Doc.tsx";
 
 const mirador = () => window.mirador;
@@ -57,7 +58,24 @@ function CardHead({ id, card, children }: { id: string; card: CardProps; childre
   );
 }
 
-function ChangeCard({ change, ...card }: { change: Change } & CardProps) {
+const goesInDirectly = (document: GoogleDoc, change: Change) => document.directEdits && change.by === "you" && (change.kind === "replace" || change.kind === "insert" || change.kind === "delete");
+
+function ApprovalButtons({ change }: { change: Change }) {
+  return (
+    <div className="row">
+      {change.approved ? (
+        <button onClick={() => mirador().apply({ op: "unapprove", change: change.id })}>Undo approval</button>
+      ) : (
+        <button className="primary" onClick={() => mirador().apply({ op: "approve", change: change.id })}>
+          Approve
+        </button>
+      )}
+      <button onClick={() => mirador().apply({ op: "drop", change: change.id })}>Drop</button>
+    </div>
+  );
+}
+
+function ChangeCard({ change, direct, ...card }: { change: Change; direct: boolean } & CardProps) {
   const by = change.by === "you" ? "You" : "Agent";
   return (
     <li className={cardClass("change", card, change.approved && "approved", change.note && "stuck")} data-change={change.id} {...hoverProps(change.id, card)}>
@@ -65,20 +83,12 @@ function ChangeCard({ change, ...card }: { change: Change } & CardProps) {
         <div className="who">
           {change.id} · {by}
           {change.approved && <span className="badge">Approved</span>}
+          {direct && <span className="badge direct">Goes in directly</span>}
         </div>
         <div className={card.open ? "what" : "what clamped"}>{changeSummary(change)}</div>
       </CardHead>
       {change.note && <div className="note">Can't be sent: {change.note}</div>}
-      <div className="row">
-        {change.approved ? (
-          <button onClick={() => mirador().apply({ op: "unapprove", change: change.id })}>Undo approval</button>
-        ) : (
-          <button className="primary" onClick={() => mirador().apply({ op: "approve", change: change.id })}>
-            Approve
-          </button>
-        )}
-        <button onClick={() => mirador().apply({ op: "drop", change: change.id })}>Drop</button>
-      </div>
+      <ApprovalButtons change={change} />
     </li>
   );
 }
@@ -254,6 +264,7 @@ const shortQuote = (parts: SelectedPart[]) => {
 };
 
 function SelectionBox({ selected, onDone }: { selected: Selected; onDone(): void }) {
+  const [asking, setAsking] = useState(false);
   const [words, setWords] = useState("");
   const [sent, setSent] = useState(false);
   const { parts } = selected;
@@ -269,6 +280,17 @@ function SelectionBox({ selected, onDone }: { selected: Selected; onDone(): void
     mirador().apply({ op: "comment", block, quote, at, text: words.trim() });
     onDone();
   };
+  if (!asking)
+    return (
+      <div className="selection-box compact" style={box} role="dialog" aria-label="Selected text" onMouseDown={(event) => event.stopPropagation()}>
+        <div className="row">
+          <button onClick={() => setAsking(true)}>Ask the agent…</button>
+          <button disabled={!oneParagraph} title={oneParagraph ? undefined : "A comment goes on text in one paragraph."} onClick={() => setAsking(true)}>
+            Comment…
+          </button>
+        </div>
+      </div>
+    );
   return (
     <div className="selection-box" style={box} role="dialog" aria-label="Selected text" onMouseDown={(event) => event.stopPropagation()}>
       <div className="quote">“{shortQuote(parts)}”</div>
@@ -293,6 +315,23 @@ function SelectionBox({ selected, onDone }: { selected: Selected; onDone(): void
         <button onClick={onDone}>Cancel</button>
       </div>
       {!oneParagraph && <div className="quiet">A comment goes on text in one paragraph.</div>}
+    </div>
+  );
+}
+
+/** Steps through the pending changes one at a time, opening each and showing its text, as a review does. */
+function Stepper({ changes, open, onOpen }: { changes: Change[]; open: string | null; onOpen(id: string): void }) {
+  const at = changes.findIndex(({ id }) => id === open);
+  const step = (by: number) => onOpen(changes[at === -1 ? (by > 0 ? 0 : changes.length - 1) : (at + by + changes.length) % changes.length]!.id);
+  return (
+    <div className="stepper row">
+      <button aria-label="Previous change" onClick={() => step(-1)}>
+        ‹
+      </button>
+      <span className="quiet">{at === -1 ? `${changes.length} to review` : `${changes[at]!.id} · ${at + 1} of ${changes.length}`}</span>
+      <button aria-label="Next change" onClick={() => step(1)}>
+        ›
+      </button>
     </div>
   );
 }
@@ -347,7 +386,7 @@ function Sidebar({ document, focused, open, onFocus, onOpen }: SidebarProps) {
           ) : (
             <ul>
               {changes.map((change) => (
-                <ChangeCard key={change.id} change={change} {...card(change.id)} />
+                <ChangeCard key={change.id} change={change} direct={goesInDirectly(document, change)} {...card(change.id)} />
               ))}
             </ul>
           ))}
@@ -374,14 +413,41 @@ function Sidebar({ document, focused, open, onFocus, onOpen }: SidebarProps) {
           ))}
       </div>
       {changes.length > 0 && (
-        <div className="send-bar row">
+        <div className="send-bar">
+          <Stepper changes={changes} open={open} onOpen={onOpen} />
+          <label className="switch">
+            <input type="checkbox" checked={document.directEdits} onChange={(event) => mirador().apply({ op: "direct-edits", on: event.target.checked })} />
+            My edits go in directly, not as suggestions
+          </label>
+          <div className="row">
           {waiting > 0 && <button onClick={() => mirador().apply({ op: "approve-all" })}>Approve all</button>}
           <button className="primary" disabled={approved === 0} onClick={() => mirador().run("push")}>
             Send to Google Docs{approved ? ` (${approved})` : ""}
           </button>
+          </div>
         </div>
       )}
     </aside>
+  );
+}
+
+/** Approve and Drop beside the text of the change that is open, so a review can stay in the doc. */
+function ChangeActions({ change, docArea }: { change: Change; docArea: RefObject<HTMLDivElement | null> }) {
+  const [place, setPlace] = useState<{ top: number; left: number } | null>(null);
+  useLayoutEffect(() => {
+    const marked = docArea.current?.querySelector(`[data-mark="${CSS.escape(change.id)}"]`);
+    const rect = marked?.getBoundingClientRect();
+    const next = rect ? { top: rect.bottom + window.scrollY + 4, left: Math.max(8, Math.min(rect.left + window.scrollX, window.innerWidth - 280)) } : null;
+    setPlace((now) => (now?.top === next?.top && now?.left === next?.left ? now : next));
+  });
+  if (!place) return null;
+  return (
+    <div className="change-actions" style={place} role="dialog" aria-label={`Change ${change.id}`} onMouseDown={(event) => event.stopPropagation()}>
+      <span className="quiet">
+        {change.id} · {change.by === "you" ? "You" : "Agent"}
+      </span>
+      <ApprovalButtons change={change} />
+    </div>
   );
 }
 
@@ -390,10 +456,23 @@ export function App({ state }: { state: AppDocumentState<GoogleDoc> }) {
   const [focused, setFocused] = useState<string | null>(null);
   const [open, setOpen] = useState<string | null>(null);
   const [selected, setSelected] = useState<Selected | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const docArea = useRef<HTMLDivElement>(null);
+  const openChange = document.changes.find(({ id }) => id === open);
+  const write = (block: string, text: string) => {
+    try {
+      writtenChange(document.snapshot!, document.changes, block, text);
+    } catch (error) {
+      setNotice((error as Error).message);
+      return;
+    }
+    setNotice(null);
+    mirador().apply({ op: "write", block, text });
+  };
   const running = state.task?.state === "running";
   const openShowingText = (id: string | null) => {
     setOpen(id);
+    setFocused(null);
     if (id) docArea.current?.querySelector(`[data-mark="${CSS.escape(id)}"], [data-suggestions~="${CSS.escape(id)}"]`)?.scrollIntoView({ block: "center", behavior: "smooth" });
   };
 
@@ -406,11 +485,16 @@ export function App({ state }: { state: AppDocumentState<GoogleDoc> }) {
       if (found) setSelected(found);
     };
     const onMouseDown = () => setSelected(null);
+    const onTyping = (event: Event) => {
+      if (docArea.current?.contains(event.target as Node)) setSelected(null);
+    };
     window.addEventListener("mouseup", onMouseUp);
     window.addEventListener("mousedown", onMouseDown);
+    window.addEventListener("input", onTyping);
     return () => {
       window.removeEventListener("mouseup", onMouseUp);
       window.removeEventListener("mousedown", onMouseDown);
+      window.removeEventListener("input", onTyping);
     };
   }, [document.snapshot]);
 
@@ -437,6 +521,11 @@ export function App({ state }: { state: AppDocumentState<GoogleDoc> }) {
         </div>
       </header>
       <TaskLine state={state} />
+      {notice && (
+        <p className="problem">
+          {notice} <button onClick={() => setNotice(null)}>OK</button>
+        </p>
+      )}
       {!document.url ? (
         <LinkForm />
       ) : !document.snapshot ? (
@@ -444,11 +533,12 @@ export function App({ state }: { state: AppDocumentState<GoogleDoc> }) {
       ) : (
         <div className="body">
           <div className="doc" ref={docArea}>
-            <Doc snapshot={document.snapshot} changes={document.changes} focused={focused ?? open} onFocus={setFocused} onOpen={setOpen} />
+            <Doc snapshot={document.snapshot} changes={document.changes} focused={focused ?? open} onFocus={setFocused} onOpen={setOpen} onWrite={write} />
           </div>
           <Sidebar document={{ ...document, snapshot: document.snapshot }} focused={focused} open={open} onFocus={setFocused} onOpen={openShowingText} />
         </div>
       )}
+      {openChange && !selected && <ChangeActions change={openChange} docArea={docArea} />}
       {selected && (
         <SelectionBox
           selected={selected}

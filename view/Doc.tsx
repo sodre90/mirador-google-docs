@@ -1,5 +1,6 @@
-import { useMemo } from "react";
+import { memo, useMemo, useState, type FocusEvent, type KeyboardEvent } from "react";
 import { OBJECT_MARK, type Block, type Change, type Paragraph, type Snapshot } from "../shared/document.ts";
+import { editedText, unwritable } from "../shared/write.ts";
 import { marksOf, piecesOf, type Mark, type Piece } from "./marks.ts";
 
 const TAGS: Record<string, "h1" | "h2" | "h3" | "h4" | "h5" | "h6"> = { TITLE: "h1", HEADING_1: "h1", HEADING_2: "h2", HEADING_3: "h3", HEADING_4: "h4", HEADING_5: "h5", HEADING_6: "h6" };
@@ -11,42 +12,123 @@ interface Props {
   onFocus(id: string | null): void;
   /** Clicking marked text opens what marks it in the sidebar. */
   onOpen(id: string): void;
+  /** The user left a paragraph they typed in: its text as they wrote it. */
+  onWrite(block: string, text: string): void;
 }
 
-function TextPiece({ piece, focused, onFocus, onOpen }: { piece: Extract<Piece, { kind: "text" }> } & Pick<Props, "focused" | "onFocus" | "onOpen">) {
+type Shared = Pick<Props, "focused" | "onFocus" | "onOpen">;
+
+function TextPiece({ piece, focused, onFocus, onOpen }: { piece: Extract<Piece, { kind: "text" }> } & Shared) {
   const { run, mark } = piece;
+  if (mark?.mine && mark.kind === "deleted") return null;
   const suggestions = run.inserted ?? run.deleted;
   const opened = mark?.id ?? suggestions?.[0];
   const classes = [run.bold && "bold", run.italic && "italic", run.underline && "underline", run.strikethrough && "strike", run.inserted && "their-insertion", run.deleted && "their-deletion", run.object && "object", mark && `mark-${mark.kind}`, (mark?.id === focused || (focused !== null && suggestions?.includes(focused))) && "focused"].filter(Boolean).join(" ");
   const text = run.object ? "▣".repeat(piece.text.length) : piece.text;
   return (
-    <span className={classes || undefined} data-start={piece.start} data-mark={mark?.id} data-suggestions={suggestions?.join(" ")} title={run.link} onClick={opened ? () => onOpen(opened) : undefined} onMouseEnter={mark && (() => onFocus(mark.id))} onMouseLeave={mark && (() => onFocus(null))}>
+    <span
+      className={classes || undefined}
+      data-start={piece.start}
+      data-mark={mark?.id}
+      data-suggestions={suggestions?.join(" ")}
+      data-object={run.object ? "" : undefined}
+      contentEditable={run.object ? false : undefined}
+      title={run.link}
+      onClick={opened ? () => onOpen(opened) : undefined}
+      onMouseEnter={mark && (() => onFocus(mark.id))}
+      onMouseLeave={mark && (() => onFocus(null))}
+    >
       {text}
     </span>
   );
 }
 
-function AddedPiece({ mark, text, focused }: { mark: Mark; text: string; focused: string | null }) {
+/** A change's added text: the agent's can't be typed in, the user's own reads as already written. */
+function AddedPiece({ mark, text, focused, onOpen }: { mark: Mark; text: string } & Pick<Props, "focused" | "onOpen">) {
+  const className = ["added", mark.mine && "mine", mark.id === focused && "focused"].filter(Boolean).join(" ");
+  if (mark.mine)
+    return (
+      <span className={className} data-mark={mark.id} onClick={() => onOpen(mark.id)}>
+        {text}
+      </span>
+    );
   return (
-    <ins className={mark.id === focused ? "added focused" : "added"} data-mark={mark.id} contentEditable={false}>
+    <ins className={className} data-mark={mark.id} contentEditable={false} onClick={() => onOpen(mark.id)}>
       {text}
     </ins>
   );
 }
 
-function ParagraphView({ paragraph, marks, focused, onFocus, onOpen }: { paragraph: Paragraph; marks: Mark[] } & Pick<Props, "focused" | "onFocus" | "onOpen">) {
-  const Tag = TAGS[paragraph.style] ?? "p";
-  const pieces = piecesOf(paragraph, marks);
-  const className = [paragraph.style === "SUBTITLE" && "subtitle", paragraph.bullet && "bullet"].filter(Boolean).join(" ") || undefined;
-  return (
-    <Tag className={className} data-block={paragraph.id} style={paragraph.bullet && { marginInlineStart: `${1.5 + paragraph.bullet.nesting * 1.5}em` }}>
-      {pieces.map((piece, index) => (piece.kind === "text" ? <TextPiece key={index} piece={piece} focused={focused} onFocus={onFocus} onOpen={onOpen} /> : <AddedPiece key={index} mark={piece.mark} text={piece.text} focused={focused} />))}
-      {paragraph.text === "" && pieces.length === 0 && <br />}
-    </Tag>
-  );
+/** After a line break at the end of a paragraph, the caret has nowhere to go but before it; this gives it a place after it. */
+const CARET_HOLDER = "\u200B";
+
+/** The text a paragraph shows as typed: images and chips as their mark, and none of the agent's added text. */
+function typedText(paragraph: HTMLElement): string {
+  const textOf = (node: Node): string => {
+    if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? "";
+    if (!(node instanceof HTMLElement)) return "";
+    if (node.dataset.object !== undefined) return OBJECT_MARK.repeat(node.textContent?.length ?? 0);
+    if (node !== paragraph && !node.isContentEditable) return "";
+    return [...node.childNodes].map(textOf).join("");
+  };
+  return textOf(paragraph).replaceAll(CARET_HOLDER, "");
 }
 
-function BlockView({ block, marks, focused, onFocus, onOpen }: { block: Block; marks: Map<string, Mark[]> } & Pick<Props, "focused" | "onFocus" | "onOpen">) {
+interface ParagraphProps extends Shared {
+  paragraph: Paragraph;
+  marks: Mark[];
+  /** The paragraph's text with the user's own edits made, as they type on from. */
+  written: string;
+  editing: boolean;
+  onEditing(block: string | null): void;
+  onWrite(block: string, text: string): void;
+}
+
+/** While the user types in a paragraph, React leaves it alone: the text they typed is in the page, not in its pieces. */
+const ParagraphView = memo(
+  function ParagraphView({ paragraph, marks, written, focused, onFocus, onOpen, onEditing, onWrite }: ParagraphProps) {
+    const Tag = TAGS[paragraph.style] ?? "p";
+    const pieces = piecesOf(paragraph, marks);
+    const problem = unwritable(paragraph);
+    const className = [paragraph.style === "SUBTITLE" && "subtitle", paragraph.bullet && "bullet", !problem && "writable"].filter(Boolean).join(" ") || undefined;
+    const leave = (event: FocusEvent<HTMLElement>) => {
+      onEditing(null);
+      const text = typedText(event.currentTarget);
+      if (text !== written) onWrite(paragraph.id, text);
+    };
+    const newLineOnEnter = (event: KeyboardEvent<HTMLElement>) => {
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+      const selection = window.getSelection();
+      const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+      if (!range) return;
+      range.deleteContents();
+      const lineBreak = document.createTextNode(`\n${CARET_HOLDER}`);
+      range.insertNode(lineBreak);
+      selection!.collapse(lineBreak, lineBreak.length);
+    };
+    return (
+      <Tag
+        className={className}
+        data-block={paragraph.id}
+        style={paragraph.bullet && { marginInlineStart: `${1.5 + paragraph.bullet.nesting * 1.5}em` }}
+        contentEditable={!problem}
+        suppressContentEditableWarning
+        spellCheck={false}
+        title={problem ?? undefined}
+        onFocus={() => onEditing(paragraph.id)}
+        onBlur={problem ? undefined : leave}
+        onKeyDown={problem ? undefined : newLineOnEnter}
+      >
+        {pieces.map((piece, index) => (piece.kind === "text" ? <TextPiece key={index} piece={piece} focused={focused} onFocus={onFocus} onOpen={onOpen} /> : <AddedPiece key={index} mark={piece.mark} text={piece.text} focused={focused} onOpen={onOpen} />))}
+        {paragraph.text === "" && pieces.length === 0 && <br />}
+      </Tag>
+    );
+  },
+  (before, after) => before.editing && after.editing,
+);
+
+function BlockView({ block, ...rest }: { block: Block; marks: Map<string, Mark[]>; written: (paragraph: Paragraph) => string; editing: string | null; onEditing(block: string | null): void; onWrite: Props["onWrite"] } & Shared) {
   if (block.kind === "table")
     return (
       <table data-block={block.id}>
@@ -61,19 +143,32 @@ function BlockView({ block, marks, focused, onFocus, onOpen }: { block: Block; m
         </tbody>
       </table>
     );
-  return <ParagraphView paragraph={block} marks={marks.get(block.id) ?? []} focused={focused} onFocus={onFocus} onOpen={onOpen} />;
+  const { marks, written, editing, ...shared } = rest;
+  return <ParagraphView paragraph={block} marks={marks.get(block.id) ?? []} written={written(block)} editing={editing === block.id} {...shared} />;
 }
 
-/** The doc as Google shows it, with the pending changes and the open threads marked in its text. */
-export function Doc({ snapshot, changes, focused, onFocus, onOpen }: Props) {
+/** What one of the user's own marks changes in the text, as the paragraph shows it. */
+const editOfMark = ({ kind, start, end, added }: Mark) => (kind === "point" ? { start: added!.at, end: added!.at, text: added!.text } : { start, end, text: added?.text ?? "" });
+
+/** The doc as Google shows it, with the pending changes and the open threads marked in its text; the user types into its paragraphs. */
+export function Doc({ snapshot, changes, focused, onFocus, onOpen, onWrite }: Props) {
   const marks = useMemo(() => marksOf(snapshot, changes), [snapshot, changes]);
+  const [editing, setEditing] = useState<string | null>(null);
+  /** Bumped when the user leaves a paragraph, so React draws it afresh rather than on top of what they typed. */
+  const [drawn, setDrawn] = useState<Record<string, number>>({});
+  const written = (paragraph: Paragraph) => editedText(paragraph.text, (marks.get(paragraph.id) ?? []).filter(({ mine }) => mine).map(editOfMark));
+  const write = (block: string, text: string) => onWrite(block, text);
+  const onEditing = (block: string | null) => {
+    if (editing && block === null) setDrawn((counts) => ({ ...counts, [editing]: (counts[editing] ?? 0) + 1 }));
+    setEditing(block);
+  };
   return (
     <article className="page">
       {snapshot.tabs.map((tab) => (
         <section key={tab.id} data-tab={tab.id}>
           {snapshot.tabs.length > 1 && <div className="tab-title">{tab.title}</div>}
           {tab.blocks.map((block) => (
-            <BlockView key={block.id} block={block} marks={marks} focused={focused} onFocus={onFocus} onOpen={onOpen} />
+            <BlockView key={`${block.id}:${drawn[block.id] ?? 0}`} block={block} marks={marks} written={written} editing={editing} onEditing={onEditing} onWrite={write} focused={focused} onFocus={onFocus} onOpen={onOpen} />
           ))}
         </section>
       ))}

@@ -1,6 +1,7 @@
 import type { AppAuthor } from "../mirador/api.ts";
 import { anchorIn, locate } from "./anchor.ts";
 import { checkedDocument, documentIdOf, isAnchored, type Change, type ChangeBody, type GoogleDoc, type Snapshot } from "./document.ts";
+import { writtenChange } from "./write.ts";
 
 export interface Applied {
   document: GoogleDoc;
@@ -140,6 +141,22 @@ function propose(document: GoogleDoc, operation: Operation, author: AppAuthor | 
   };
 }
 
+/** The user typed `text` as a paragraph's new text: one change takes the place of their earlier edits there. */
+function write(document: GoogleDoc, block: string, text: string): Applied {
+  const { body, replaces, before } = writtenChange(requireSnapshot(document), document.changes, block, text);
+  const replaced = new Set(replaces.map(({ id }) => id));
+  const kept = document.changes.filter(({ id }) => !replaced.has(id));
+  const inverse = { op: "write", block, text: before };
+  if (!body) return { document: { ...document, changes: kept }, inverse, summary: replaces.length ? `Took back your edits in ${block}: ${[...replaced].join(", ")}.` : `Nothing changed in ${block}.`, touched: [...replaced] };
+  const change: Change = { ...body, id: `c${document.nextChange}`, by: "you", approved: true };
+  return {
+    document: { ...document, changes: [...kept, change], nextChange: document.nextChange + 1 },
+    inverse,
+    summary: `Wrote ${change.id}: ${changeSummary(change)}${replaces.length ? `, in place of ${[...replaced].join(", ")}` : ""}.`,
+    touched: [change.id, ...replaced],
+  };
+}
+
 const changeNamed = (document: GoogleDoc, id: unknown) => {
   const change = document.changes.find((candidate) => candidate.id === id);
   if (!change) throw new Error(`There's no pending change ${JSON.stringify(id)}; app_state lists them.`);
@@ -241,6 +258,14 @@ export function applyOperation(document: GoogleDoc, operation: unknown, author?:
     }
     case "restore":
       return restore(document, (given.changes as Change[] | undefined) ?? [], author);
+    case "write":
+      requireUser(author, "type into the doc");
+      return write(document, string(given, "block"), string(given, "text"));
+    case "direct-edits": {
+      requireUser(author, "choose how their edits are sent");
+      const on = given.on === true;
+      return { document: { ...document, directEdits: on }, inverse: { op: "direct-edits", on: document.directEdits }, summary: on ? "Your own edits go straight into the doc on Send." : "Your own edits go to the doc as suggestions on Send." };
+    }
     case "sent": {
       const ids = idsOf(given);
       const problems = (given.problems ?? {}) as Record<string, string>;

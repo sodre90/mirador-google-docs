@@ -270,6 +270,7 @@ button.link {
   border-radius: 8px;
   padding: 6px 10px;
 }
+.change.open,
 .thread.open,
 .suggestion.open {
   border-color: light-dark(#0b57d0, #8ab4f8);
@@ -358,4 +359,52 @@ button.link {
 .decided {
   color: light-dark(#5f6368, #9aa0a6);
   font-size: 0.9em;
+}
+
+.writable {
+  white-space: pre-wrap;
+  outline: none;
+  cursor: text;
+}
+.writable:focus {
+  background: light-dark(#f8fafd, #1c1d20);
+  box-shadow: -8px 0 0 light-dark(#f8fafd, #1c1d20), 8px 0 0 light-dark(#f8fafd, #1c1d20);
+}
+.added.mine {
+  background: light-dark(#e8f0fe, #1f3354);
+  text-decoration: none;
+}
+.badge.direct {
+  background: light-dark(#e8f0fe, #1f3354);
+  color: light-dark(#0b57d0, #8ab4f8);
+}
+.selection-box.compact {
+  width: auto;
+  padding: 6px;
+}
+.change-actions {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: light-dark(#fff, #26282b);
+  border: 1px solid light-dark(#c4c7c5, #4a4d51);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px light-dark(#0003, #000a);
+  padding: 4px 6px 4px 10px;
+  z-index: 9;
+}
+.send-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.stepper {
+  align-items: center;
+}
+.switch {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 12px;
 }

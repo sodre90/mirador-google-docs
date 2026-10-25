@@ -8,11 +8,18 @@ export interface Mark {
   kind: "deleted" | "commented" | "thread" | "point";
   /** A change's id, or a thread's. */
   id: string;
+  /** The user's own edit of the text, which the view shows as already made, so they type on in it. */
+  mine?: true;
   /** Text the change would add there, shown but not part of the paragraph's text. */
   added?: { text: string; at: number };
 }
 
 function markOf(change: Change, start: number, end: number): Mark {
+  const mark = textMarkOf(change, start, end);
+  return change.by === "you" && mark.kind !== "commented" ? { ...mark, mine: true } : mark;
+}
+
+function textMarkOf(change: Change, start: number, end: number): Mark {
   switch (change.kind) {
     case "replace":
       return { start, end, kind: "deleted", id: change.id, added: { text: change.text, at: end } };

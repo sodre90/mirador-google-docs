@@ -4,8 +4,9 @@ import { anchorIn, locate } from "../shared/anchor.ts";
 import { snapshotOf, type GoogleDocument } from "../shared/convert.ts";
 import { describeDocument } from "../shared/describe.ts";
 import { checkedDocument, newDocument, OBJECT_MARK, type GoogleDoc, type Paragraph, type Snapshot } from "../shared/document.ts";
-import { applyOperation } from "../shared/operations.ts";
+import { applyOperation, changeSummary } from "../shared/operations.ts";
 import { planPush } from "../shared/push.ts";
+import { differenceOf, editedText, toWholeWords } from "../shared/write.ts";
 import fixture from "./fixtures/launch-plan.json";
 
 const URL = "https://docs.google.com/document/d/1testDocumentIdForMiradorGoogleDocs/edit";
@@ -261,6 +262,75 @@ describe("suggestions in the doc", () => {
     const document = applied(linked(), [{ op: "accept", suggestion: "suggest.a" }, you]);
     expect(planPush(document, gone).problems).toEqual({ c1: "The suggestion isn't open in the doc any more." });
     expect(describeDocument(linked())).toContain("Suggestions in the doc:\n- suggest.a by Ben: Replace: “5k” with “10k”");
+  });
+});
+
+describe("typing into the doc", () => {
+  const write = (document: GoogleDoc, block: string, text: string) => applyOperation(document, { op: "write", block, text }, you);
+
+  test("the difference of two texts is what lies between their common start and end", () => {
+    expect(differenceOf("We ship by Q3.", "We ship by Q3.")).toBeNull();
+    expect(differenceOf("We ship by Q3.", "We ship by the end of Q3.")).toEqual({ start: 11, end: 11, text: "the end of " });
+    expect(differenceOf("We ship by Q3.", "We ship.")).toEqual({ start: 7, end: 13, text: "" });
+    expect(differenceOf("aaa", "aaaa")).toEqual({ start: 3, end: 3, text: "a" });
+    expect(toWholeWords("We ship", "So we ship", { start: 0, end: 1, text: "So w" })).toEqual({ start: 0, end: 2, text: "So we" });
+    expect(toWholeWords("by Q3", "by the end of Q3", { start: 3, end: 3, text: "the end of " })).toEqual({ start: 3, end: 3, text: "the end of " });
+    expect(editedText("We ship by Q3.", [{ start: 11, end: 13, text: "May" }, { start: 0, end: 2, text: "They" }])).toBe("They ship by May.");
+  });
+
+  test("what you type in a paragraph becomes one approved change: a replace, a delete or an insert next to the words around it", () => {
+    const replaced = write(linked(), "p4", "We ship by May and review by Q3.");
+    expect(replaced.summary).toBe("Wrote c1: replace “Q3” in p4 with “May”.");
+    expect(replaced.document.changes[0]).toMatchObject({ kind: "replace", by: "you", approved: true, anchor: { block: "p4", quote: "Q3", prefix: "We ship by " } });
+    expect(write(linked(), "p4", "We ship and review by Q3.").summary).toBe("Wrote c1: delete “by Q3 ” in p4.");
+    expect(write(linked(), "p4", "We ship by Q3 and then review by Q3.").summary).toBe("Wrote c1: insert “then ” after “and ” in p4.");
+    expect(write(linked(), "p4", "So we ship by Q3 and review by Q3.").summary).toBe("Wrote c1: replace “We” in p4 with “So we”.");
+    expect(write(linked(), "p4", "Now we ship by Q3 and review by Q3.").summary).toBe("Wrote c1: replace “We” in p4 with “Now we”.");
+    expect(write(linked(), "p4", "We shipped by Q3 and review by Q3.").summary).toBe("Wrote c1: replace “ship” in p4 with “shipped”.");
+  });
+
+  test("typing again in a paragraph takes the place of your earlier edits there, and the agent's stay", () => {
+    const first = applied(linked(), [{ op: "write", block: "p4", text: "We ship by May and review by Q3." }, you], [{ op: "replace", block: "p4", quote: "review", with: "check" }, agent]);
+    const again = write(first, "p4", "We ship by early May and review by Q3.");
+    expect(again.summary).toBe("Wrote c3: replace “Q3” in p4 with “early May”, in place of c1.");
+    expect(again.document.changes.map(({ id }) => id)).toEqual(["c2", "c3"]);
+    expect(again.inverse).toEqual({ op: "write", block: "p4", text: "We ship by May and review by Q3." });
+    const undone = applyOperation(again.document, again.inverse, you).document;
+    expect(undone.changes.map(changeSummary)).toEqual(["replace “review” in p4 with “check”", "replace “Q3” in p4 with “May”"]);
+    const back = write(first, "p4", "We ship by Q3 and review by Q3.");
+    expect(back.summary).toBe("Took back your edits in p4: c1.");
+    expect(back.document.changes.map(({ id }) => id)).toEqual(["c2"]);
+  });
+
+  test("typing is refused where it can't be sent: images, open suggestions, empty paragraphs, and for the agent", () => {
+    expect(() => write(linked(), "p3", " Owner: Ana")).toThrow("Images and chips can't be changed by typing");
+    expect(write(linked(), "p3", "\uFFFC Owner: Ana Lee").summary).toBe("Wrote c1: insert “ Lee” after “Ana” in p3.");
+    expect(() => write(linked(), "p5", "Budget: 20k")).toThrow("This paragraph has suggestions in the doc: accept or reject them first");
+    expect(() => applyOperation(linked(), { op: "write", block: "p4", text: "x" }, agent)).toThrow("Only the user can type into the doc, in the view.");
+    const proposed = applied(linked(), [{ op: "replace", block: "p4", quote: "review", with: "check" }, agent]);
+    expect(() => write(proposed, "p4", "We ship by Q3 and reviews by Q3.")).toThrow("The agent's change c1 is on this text: approve or drop it first, then type here.");
+    expect(write(proposed, "p4", "We ship by May and review by Q3.").summary).toBe("Wrote c2: replace “Q3” in p4 with “May”.");
+  });
+
+  test("with direct edits on, Send puts your edits in first and leaves the agent's to be placed after them", () => {
+    const document = applied(
+      linked(),
+      [{ op: "direct-edits", on: true }, you],
+      [{ op: "write", block: "p4", text: "We ship by May and review by Q3." }, you],
+      [{ op: "replace", block: "p2", quote: "by Q3", with: "soon" }, agent],
+      [{ op: "approve-all" }, you],
+    );
+    const plan = planPush(document, snapshot());
+    expect(plan.directChanges).toEqual(["c1"]);
+    expect(plan.directRequests).toEqual([
+      { deleteContentRange: { range: { startIndex: expect.any(Number), endIndex: expect.any(Number), tabId: "t.0" } } },
+      { insertText: { location: { index: expect.any(Number), tabId: "t.0" }, text: "May" } },
+    ]);
+    expect(plan.suggestionChanges).toEqual([]);
+    expect(plan.problems).toEqual({});
+    const later = planPush({ ...document, changes: document.changes.filter(({ id }) => id !== "c1") }, snapshot());
+    expect(later.suggestionChanges).toEqual(["c2"]);
+    expect(() => applyOperation(linked(), { op: "direct-edits", on: true }, agent)).toThrow("Only the user can choose how their edits are sent");
   });
 });
 
