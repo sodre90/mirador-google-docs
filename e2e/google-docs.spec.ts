@@ -373,6 +373,17 @@ test("the agent proposes edits to a Google doc shown in Mirador; you select text
     ]);
   });
 
+  await test.step("what the agent proposes while you're on another tab is marked new on To send until you look", async () => {
+    await tab(page, "Comments");
+    await tool(conversation, "apply", { op: { op: "replace", block: "p6", quote: "Notes", with: "Open notes" } });
+    const toSend = view(page).getByRole("tab", { name: /^To send/ });
+    await expect(toSend.locator(".new")).toHaveText("1 new");
+    await toSend.click();
+    await expect(toSend.locator(".new")).toHaveCount(0);
+    await tab(page, "Comments");
+    await expect(toSend.locator(".new")).toHaveCount(0);
+  });
+
   await test.step("you sign in another Google account from the view", async () => {
     writeFileSync(join(gcloud.folder, "next-sign-in"), "ana@work.example.com\n");
     await view(page).getByRole("button", { name: "Sign in a Google account" }).click();

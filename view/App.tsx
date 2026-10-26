@@ -371,6 +371,8 @@ function Sidebar({ document, focused, open, onFocus, onOpen }: SidebarProps) {
   const undecided = snapshot.suggestions.filter((suggestion) => !pendingDecisionOn(changes, suggestion.id));
   const [chosen, setChosen] = useState<SidebarTab | null>(null);
   const [showResolved, setShowResolved] = useState(false);
+  /** The changes the user has had To send open for; the agent's others are new to them. */
+  const [seen, setSeen] = useState(() => new Set(changes.map(({ id }) => id)));
   const tabOf = (id: string): SidebarTab | null =>
     changes.some((change) => change.id === id) ? "changes" : snapshot.threads.some((thread) => thread.id === id) ? "comments" : undecided.some((suggestion) => suggestion.id === id) ? "suggestions" : null;
   useEffect(() => {
@@ -379,6 +381,10 @@ function Sidebar({ document, focused, open, onFocus, onOpen }: SidebarProps) {
     if (open && resolvedThreads.some((thread) => thread.id === open)) setShowResolved(true);
   }, [open]);
   const tab: SidebarTab = chosen ?? (changes.length ? "changes" : openThreads.length || !undecided.length ? "comments" : "suggestions");
+  useEffect(() => {
+    if (tab === "changes" && changes.some(({ id }) => !seen.has(id))) setSeen(new Set([...seen, ...changes.map(({ id }) => id)]));
+  }, [tab, changes]);
+  const newFromTheAgent = changes.filter(({ id, by }) => by === "agent" && !seen.has(id)).length;
   const card = (id: string): CardProps => ({ focused: focused === id, open: open === id, onFocus, onOpen });
   const tabs: { id: SidebarTab; title: string; count: number }[] = [
     { id: "changes", title: "To send", count: changes.length },
@@ -392,6 +398,7 @@ function Sidebar({ document, focused, open, onFocus, onOpen }: SidebarProps) {
         {tabs.map(({ id, title, count }) => (
           <button key={id} role="tab" aria-selected={tab === id} onClick={() => setChosen(id)}>
             {title} <span className="count">{count}</span>
+            {id === "changes" && tab !== "changes" && newFromTheAgent > 0 && <span className="new">{newFromTheAgent} new</span>}
           </button>
         ))}
       </div>

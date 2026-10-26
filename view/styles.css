@@ -417,3 +417,12 @@ button.chip {
   padding: 1px 8px;
   border-radius: 12px;
 }
+
+.new {
+  margin-left: 4px;
+  font-size: 11px;
+  padding: 0 6px;
+  border-radius: 8px;
+  background: light-dark(#0b57d0, #8ab4f8);
+  color: light-dark(#fff, #062e6f);
+}
