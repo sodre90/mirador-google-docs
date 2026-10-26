@@ -265,6 +265,26 @@ describe("suggestions in the doc", () => {
   });
 });
 
+type FixtureTab = { tabProperties: { tabId: string }; childTabs?: FixtureTab[]; documentTab: { body: { content: unknown[] } } };
+
+const emptyParagraphAt = (startIndex: number) => ({ startIndex, endIndex: startIndex + 1, paragraph: { elements: [{ startIndex, endIndex: startIndex + 1, textRun: { content: "\n", textStyle: {} } }], paragraphStyle: { namedStyleType: "NORMAL_TEXT" } } });
+
+const paragraphAt = (startIndex: number, text: string) => ({ startIndex, endIndex: startIndex + text.length + 1, paragraph: { elements: [{ startIndex, endIndex: startIndex + text.length + 1, textRun: { content: `${text}\n`, textStyle: {} } }], paragraphStyle: { namedStyleType: "NORMAL_TEXT" } } });
+
+/**
+ * The fixture with an empty paragraph after "Notes by Q3" in the second tab, and, if asked, another one at the end of the
+ * first, or a second empty one in the second tab after a paragraph "Ask Ana".
+ */
+function withEmptyParagraphs({ alsoInFirstTab = false, twoInSecondTab = false } = {}): GoogleDocument {
+  const copy = structuredClone(fixture) as unknown as { tabs: FixtureTab[] };
+  const tabs = copy.tabs.flatMap((tab) => [tab, ...(tab.childTabs ?? [])]);
+  const notes = tabs.find(({ tabProperties }) => tabProperties.tabId === "t.1")!.documentTab.body.content;
+  notes.push(emptyParagraphAt(13));
+  if (twoInSecondTab) notes.push(paragraphAt(14, "Ask Ana"), emptyParagraphAt(22));
+  if (alsoInFirstTab) tabs.find(({ tabProperties }) => tabProperties.tabId === "t.0")!.documentTab.body.content.push(emptyParagraphAt(118));
+  return copy as unknown as GoogleDocument;
+}
+
 describe("typing into the doc", () => {
   const write = (document: GoogleDoc, block: string, text: string) => applyOperation(document, { op: "write", block, text }, you);
 
@@ -302,7 +322,30 @@ describe("typing into the doc", () => {
     expect(back.document.changes.map(({ id }) => id)).toEqual(["c2"]);
   });
 
-  test("typing is refused where it can't be sent: images, open suggestions, empty paragraphs, and for the agent", () => {
+  test("typing into an empty paragraph writes there, found again by the paragraphs around it when ids move", () => {
+    const withEmpty = (): GoogleDoc => ({ ...checkedDocument({ url: URL }), snapshot: snapshot(withEmptyParagraphs()) });
+    const written = write(withEmpty(), "p7", "Ask Ben");
+    expect(written.summary).toBe("Wrote c1: write “Ask Ben” in the empty paragraph p7.");
+    expect(written.document.changes[0]).toMatchObject({ anchor: { tab: "t.1", block: "p7", quote: "", prefix: "Notes by Q3", suffix: "" } });
+    expect(planPush(written.document, snapshot(withEmptyParagraphs())).suggestionRequests).toEqual([{ insertText: { location: { index: 13, tabId: "t.1" }, text: "Ask Ben" } }]);
+    const movedOn = snapshot(withEmptyParagraphs({ alsoInFirstTab: true }));
+    expect(movedOn.tabs.at(-1)!.blocks.map(({ id }) => id)).toEqual(["p7", "p8"]);
+    expect(planPush(written.document, movedOn).suggestionRequests).toEqual([{ insertText: { location: { index: 13, tabId: "t.1" }, text: "Ask Ben" } }]);
+    const twoEmpty = (): GoogleDoc => ({ ...checkedDocument({ url: URL }), snapshot: snapshot(withEmptyParagraphs({ twoInSecondTab: true })) });
+    expect(twoEmpty().snapshot!.tabs.at(-1)!.blocks.map((block) => [block.id, block.kind === "paragraph" ? block.text : null])).toEqual([["p6", "Notes by Q3"], ["p7", ""], ["p8", "Ask Ana"], ["p9", ""]]);
+    const both = applied(twoEmpty(), [{ op: "write", block: "p7", text: "First" }, you], [{ op: "write", block: "p9", text: "Second" }, you]);
+    const shifted = snapshot(withEmptyParagraphs({ twoInSecondTab: true, alsoInFirstTab: true }));
+    expect(shifted.tabs.at(-1)!.blocks.map(({ id }) => id)).toEqual(["p7", "p8", "p9", "p10"]);
+    expect(planPush(both, shifted).suggestionRequests).toEqual([
+      { insertText: { location: { index: 22, tabId: "t.1" }, text: "Second" } },
+      { insertText: { location: { index: 13, tabId: "t.1" }, text: "First" } },
+    ]);
+    expect(describeDocument(withEmpty())).toContain("\np7 [empty]");
+    expect(applyOperation(withEmpty(), { op: "insert", block: "p7", after: "", text: "Hi" }, agent).summary).toBe("Proposed c1: write “Hi” in the empty paragraph p7.");
+    expect(() => applyOperation(withEmpty(), { op: "insert", block: "p6", after: "", text: "Hi" }, agent)).toThrow("Give the quote");
+  });
+
+  test("typing is refused where it can't be sent: images, open suggestions, and for the agent", () => {
     expect(() => write(linked(), "p3", " Owner: Ana")).toThrow("Images and chips can't be changed by typing");
     expect(write(linked(), "p3", "\uFFFC Owner: Ana Lee").summary).toBe("Wrote c1: insert “ Lee” after “Ana” in p3.");
     expect(() => write(linked(), "p5", "Budget: 20k")).toThrow("This paragraph has suggestions in the doc: accept or reject them first");

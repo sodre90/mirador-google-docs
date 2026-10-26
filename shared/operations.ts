@@ -15,7 +15,7 @@ type Operation = Record<string, unknown> & { op?: unknown };
 export const OPERATIONS_HELP = [
   'Operations, which apply takes; a quote is exact text of one paragraph, and "at" (optional) is where it starts in that paragraph:',
   '- { "op": "replace", "block": "p12", "quote": "by Q3", "with": "by the end of October" }',
-  '- { "op": "insert", "block": "p12", "after": "planned", "text": " carefully" } (or "before" instead of "after"; "\\n" in text starts a new paragraph)',
+  '- { "op": "insert", "block": "p12", "after": "planned", "text": " carefully" } (or "before" instead of "after"; "\\n" in text starts a new paragraph; "after": "" writes into an empty paragraph)',
   '- { "op": "delete", "block": "p12", "quote": " carefully" }',
   '- { "op": "comment", "block": "p12", "quote": "launch", "text": "Which launch?" }',
   '- { "op": "reply", "thread": "<thread id>", "text": "Done.", "resolve": true }',
@@ -56,6 +56,7 @@ export function changeSummary(change: ChangeBody): string {
     case "replace":
       return `replace ${quoted(change.anchor.quote)} in ${change.anchor.block} with ${quoted(change.text)}`;
     case "insert":
+      if (!change.anchor.quote) return `write ${quoted(change.text)} in the empty paragraph ${change.anchor.block}`;
       return `insert ${quoted(change.text)} ${change.where} ${quoted(change.anchor.quote)} in ${change.anchor.block}`;
     case "delete":
       return `delete ${quoted(change.anchor.quote)} in ${change.anchor.block}`;

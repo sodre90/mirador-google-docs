@@ -11,6 +11,8 @@ const profileName = "docs";
 const launchPlan = JSON.parse(readFileSync(join(import.meta.dirname, "..", "tests", "fixtures", "launch-plan.json"), "utf8"));
 const resolvedThread = { commentId: "doco.old", status: "RESOLVED", plainTextQuote: "Q3", headPost: { postId: "doco.old", content: "Is Q3 firm?", author: { displayName: "Ben" } } };
 const fixture = { ...launchPlan, comments: [...launchPlan.comments, resolvedThread] };
+const notesTab = [...fixture.tabs, ...fixture.tabs.flatMap((tab: { childTabs?: unknown[] }) => tab.childTabs ?? [])].find((tab) => tab.tabProperties.tabId === "t.1");
+notesTab.documentTab.body.content.push({ startIndex: 13, endIndex: 14, paragraph: { elements: [{ startIndex: 13, endIndex: 14, textRun: { content: "\n", textStyle: {} } }], paragraphStyle: { namedStyleType: "NORMAL_TEXT" } } });
 const URL = "https://docs.google.com/document/d/1testDocumentIdForMiradorGoogleDocs/edit";
 
 type Helpers = typeof import("../../visualized-claude-sessions/e2e/helpers.ts");
@@ -135,7 +137,7 @@ test("the agent proposes edits to a Google doc shown in Mirador; you select text
   await test.step("the agent links the doc and reads it; the view shows it as a doc, with its comments", async () => {
     expect(await tool(conversation, "app_open", { app: "google-docs", file: "launch-plan.gdoc" })).toContain("No doc is linked yet.");
     expect(await tool(conversation, "apply", { op: { op: "link", url: URL } })).toContain('run the task "pull"');
-    expect(await tool(conversation, "app_run", { task: "pull" })).toContain("Read “Launch plan” as ana@example.com: 7 blocks, 2 comment threads, 1 open suggestion.");
+    expect(await tool(conversation, "app_run", { task: "pull" })).toContain("Read “Launch plan” as ana@example.com: 8 blocks, 2 comment threads, 1 open suggestion.");
     await expect(view(page).locator("h1")).toHaveText("Launch plan");
     await expect(view(page).locator('[data-block="p2"] .bold')).toHaveText("launch");
     await expect(view(page).locator("table td")).toHaveText(["Risk", "Low"]);
@@ -410,6 +412,16 @@ test("the agent proposes edits to a Google doc shown in Mirador; you select text
     await view(page).getByRole("button", { name: /^All/ }).click();
     await expect(view(page).locator(".change")).toHaveCount(2);
     await expect(view(page).getByRole("button", { name: "Send to Google Docs (1)" })).toBeVisible();
+  });
+
+  await test.step("you type on an empty line, and it's written there", async () => {
+    await tab(page, "To send");
+    await view(page).locator('[data-block="p7"]').click();
+    await page.keyboard.type("Ask Ben");
+    await expect(view(page).locator(".draft")).toHaveText("Will send: write “Ask Ben” in the empty paragraph p7");
+    await view(page).locator("h2").click();
+    await expect(view(page).locator(".change").last()).toContainText("write “Ask Ben” in the empty paragraph p7");
+    await expect(view(page).locator('[data-block="p7"]')).toHaveText("Ask Ben");
   });
 
   await test.step("you sign in another Google account from the view", async () => {

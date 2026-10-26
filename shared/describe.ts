@@ -19,6 +19,7 @@ function blockLine(block: Block) {
   if (block.kind === "table") return `${block.id} [table, read only] ${block.rows.map((row) => row.join(" | ")).join(" / ")}`;
   const style = STYLE_NAMES[block.style];
   const bullet = block.bullet ? `${"  ".repeat(block.bullet.nesting)}• ` : "";
+  if (!block.text) return `${block.id} [empty]`;
   return `${block.id} ${style ? `[${style}] ` : ""}${bullet}${markedText(block)}`;
 }
 

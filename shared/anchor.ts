@@ -19,10 +19,35 @@ export function anchorIn(snapshot: Snapshot, block: string, quote: string, at?: 
   const found = findParagraph(snapshot, block);
   if (!found) throw new Error(`There's no paragraph ${block} in the doc; app_state lists them.`);
   const { tab, paragraph } = found;
+  if (!quote && !paragraph.text) return emptyParagraphAnchor(tab, paragraph);
   if (!quote) throw new Error("Give the quote: the exact text of the paragraph the change is about.");
   const start = at ?? onlyOccurrence(paragraph, quote);
   if (paragraph.text.slice(start, start + quote.length) !== quote) throw new Error(`${block} doesn't have "${quote}" at ${at}; its text is "${shortened(paragraph.text)}".`);
   return { tab: tab.id, block, quote, prefix: paragraph.text.slice(Math.max(0, start - CONTEXT), start), suffix: paragraph.text.slice(start + quote.length, start + quote.length + CONTEXT) };
+}
+
+/** An empty paragraph has no text to quote: its anchor keeps the end of the paragraph before it and the start of the one after. */
+function emptyParagraphAnchor(tab: Tab, paragraph: Paragraph): Anchor {
+  const { before, after } = neighboursOf(tab, paragraph);
+  return { tab: tab.id, block: paragraph.id, quote: "", prefix: before.slice(-CONTEXT), suffix: after.slice(0, CONTEXT) };
+}
+
+function neighboursOf(tab: Tab, paragraph: Paragraph) {
+  const all = paragraphs(tab);
+  const at = all.indexOf(paragraph);
+  return { before: all[at - 1]?.text ?? "", after: all[at + 1]?.text ?? "" };
+}
+
+/** Finds the empty paragraph an anchor with no quote is on: the one between the same neighbours, or its block among several. */
+function locateEmpty(anchor: Anchor, tabs: Tab[]): Located | { problem: string } {
+  const empty = tabs.flatMap((tab) => paragraphs(tab).filter(({ text }) => !text).map((paragraph) => ({ tab, paragraph })));
+  const between = empty.filter(({ tab, paragraph }) => {
+    const { before, after } = neighboursOf(tab, paragraph);
+    return before.endsWith(anchor.prefix) && after.startsWith(anchor.suffix);
+  });
+  const found = between.length === 1 ? between[0] : (between.length ? between : empty).find(({ paragraph }) => paragraph.id === anchor.block);
+  if (!found) return { problem: between.length ? "Several empty paragraphs are where it was, so it's unclear which one is meant." : "The empty paragraph it was in isn't in the doc any more." };
+  return locatedAt(found.tab, found.paragraph, 0, "");
 }
 
 function onlyOccurrence(paragraph: Paragraph, quote: string) {
@@ -72,6 +97,8 @@ const locatedAt = (tab: Tab, paragraph: Paragraph, start: number, quote: string)
  */
 export function locate(anchor: Anchor, snapshot: Snapshot): Located | { problem: string } {
   const sameTab = snapshot.tabs.filter((tab) => tab.id === anchor.tab);
+  // Before any search for the quote: occurrences of "" never ends.
+  if (!anchor.quote) return locateEmpty(anchor, sameTab.length ? sameTab : snapshot.tabs);
   const candidates = (sameTab.length ? sameTab : snapshot.tabs).flatMap((tab) =>
     paragraphs(tab).flatMap((paragraph) => occurrences(paragraph.text, anchor.quote).map((start) => locatedAt(tab, paragraph, start, anchor.quote))),
   );

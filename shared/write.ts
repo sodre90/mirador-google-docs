@@ -79,7 +79,6 @@ function agentEditOn(snapshot: Snapshot, changes: Change[], block: string, start
 /** Why typing can't change this paragraph, or null when it can. */
 export function unwritable(paragraph: Paragraph): string | null {
   if (paragraph.runs.some((run) => run.inserted || run.deleted)) return "This paragraph has suggestions in the doc: accept or reject them first, then type here.";
-  if (!paragraph.text) return "Typing into an empty paragraph isn't supported yet: type at the end of the paragraph before it, starting with a new line.";
   return null;
 }
 
@@ -100,6 +99,7 @@ export function writtenChange(snapshot: Snapshot, changes: Change[], block: stri
   if (theAgents) throw new Error(`The agent's change ${theAgents.id} is on this text: approve or drop it first, then type here.`);
   if (paragraph.text.slice(start, end).includes(OBJECT_MARK) || added.includes(OBJECT_MARK)) throw new Error("Images and chips can't be changed by typing: type around them, or ask the agent.");
   const original = paragraph.text;
+  if (!original) return { body: { kind: "insert", anchor: anchorIn(snapshot, block, "", 0), where: "after", text: added }, replaces, before };
   if (start < end) {
     const anchor = anchorIn(snapshot, block, original.slice(start, end), start);
     return { body: added ? { kind: "replace", anchor, text: added } : { kind: "delete", anchor }, replaces, before };
