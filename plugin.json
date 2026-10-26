@@ -1,6 +1,7 @@
 {
   "name": "google-docs",
   "title": "Google Docs",
+  "version": "1.0.0",
   "api": 4,
   "app": {
     "host": "mirador/host.ts",
