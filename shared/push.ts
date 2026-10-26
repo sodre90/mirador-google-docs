@@ -1,4 +1,4 @@
-import { locate, type Located } from "./anchor.ts";
+import { locate, spanOf, spansOverlap, type Located } from "./anchor.ts";
 import { isAnchored, type AnchoredChange, type Change, type GoogleDoc, type Snapshot } from "./document.ts";
 import { threadIn } from "./operations.ts";
 
@@ -27,13 +27,6 @@ interface Placed {
   to: number;
 }
 
-const placeOf = (change: Placed["change"], located: Located) => {
-  if (change.kind !== "insert") return { from: located.startIndex, to: located.endIndex };
-  const at = change.where === "before" ? located.startIndex : located.endIndex;
-  return { from: at, to: at };
-};
-
-const overlapping = (a: Placed, b: Placed) => a.located.tab.id === b.located.tab.id && (a.from === b.from || (a.from < b.to && b.from < a.to));
 
 function editRequests({ change, located }: Placed): unknown[] {
   const tabId = located.tab.id;
@@ -97,9 +90,9 @@ export function planPush(document: GoogleDoc, fresh: Snapshot): PushPlan {
       plan.problems[change.id] = located.problem;
       continue;
     }
-    const candidate = { change, located, ...placeOf(change, located) };
-    const clash = placed.find((other) => overlapping(other, candidate));
-    if (clash) plan.problems[change.id] = `It touches the same text as ${clash.change.id}; send that one first, then this one again.`;
+    const candidate = { change, located, ...spanOf(change, located) };
+    const clash = placed.find((other) => spansOverlap(other, candidate));
+    if (clash) plan.problems[change.id] = `It touches the same text as ${clash.change.id}, which goes in with this Send: drop this one, or drop ${clash.change.id} and send this one.`;
     else placed.push(candidate);
   }
   const lastFirst = placed.toSorted((a, b) => b.from - a.from || b.to - a.to);

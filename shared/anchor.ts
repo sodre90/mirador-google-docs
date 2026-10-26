@@ -111,3 +111,14 @@ export function locate(anchor: Anchor, snapshot: Snapshot): Located | { problem:
   if (!inContext.length && !nearby.length) return { problem: `"${anchor.quote}" isn't in the doc any more where it was.` };
   return { problem: `"${anchor.quote}" now appears ${inContext.length || nearby.length} times in the doc, so it's unclear which one is meant.` };
 }
+
+/** The stretch of a tab's indexes a text edit takes up; an insert takes up the one place it goes. */
+export function spanOf(change: { kind: string; where?: "before" | "after" }, located: Located) {
+  if (change.kind !== "insert") return { from: located.startIndex, to: located.endIndex };
+  const at = change.where === "before" ? located.startIndex : located.endIndex;
+  return { from: at, to: at };
+}
+
+/** Whether two text edits touch the same text, so the second would land in the first's suggestion. */
+export const spansOverlap = (a: { located: Located; from: number; to: number }, b: { located: Located; from: number; to: number }) =>
+  a.located.tab.id === b.located.tab.id && (a.from === b.from || (a.from < b.to && b.from < a.to));

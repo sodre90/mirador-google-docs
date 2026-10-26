@@ -424,6 +424,10 @@ test("the agent proposes edits to a Google doc shown in Mirador; you select text
     await expect(view(page).locator('[data-block="p7"]')).toHaveText("Ask Ben");
   });
 
+  await test.step("the agent can't propose a change over text another pending one changes", async () => {
+    expect(await tool(conversation, "apply", { op: { op: "replace", block: "p6", quote: "Notes by", with: "Notes from" } })).toContain("already changes this text (replace “Notes” in p6 with “Open notes”): drop it first, or make one change that covers both.");
+  });
+
   await test.step("you sign in another Google account from the view", async () => {
     writeFileSync(join(gcloud.folder, "next-sign-in"), "ana@work.example.com\n");
     await view(page).getByRole("button", { name: "Sign in a Google account" }).click();

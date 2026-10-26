@@ -195,14 +195,22 @@ describe("sending", () => {
     const document = applied(
       linked(),
       [{ op: "replace", block: "p2", quote: "🚀", with: "!" }, agent],
-      [{ op: "replace", block: "p2", quote: "Q3 🚀", with: "Q4" }, agent],
       [{ op: "delete", block: "p1", quote: " plan" }, agent],
       [{ op: "delete", block: "p5", quote: "Budget" }, agent],
-      [{ op: "approve", changes: ["c1", "c2", "c3"] }, you],
     );
-    const plan = planPush(document, snapshotOf(editedFixture((text) => text.replace("plan", "date"), "Launch plan"), "a", 0));
+    const savedBeforeClashesWereRefused = applyOperation(linked(), { op: "replace", block: "p2", quote: "Q3 🚀", with: "Q4" }, agent).document.changes[0]!;
+    const clashing: GoogleDoc = applied({ ...document, changes: [document.changes[0]!, { ...savedBeforeClashesWereRefused, id: "c4" }, ...document.changes.slice(1)], nextChange: 5 }, [{ op: "approve", changes: ["c1", "c4", "c2"] }, you]);
+    const plan = planPush(clashing, snapshotOf(editedFixture((text) => text.replace("plan", "date"), "Launch plan"), "a", 0));
     expect(plan.suggestionChanges).toEqual(["c1"]);
-    expect(plan.problems).toEqual({ c2: "It touches the same text as c1; send that one first, then this one again.", c3: '" plan" isn\'t in the doc any more where it was.' });
+    expect(plan.problems).toEqual({ c4: "It touches the same text as c1, which goes in with this Send: drop this one, or drop c1 and send this one.", c2: '" plan" isn\'t in the doc any more where it was.' });
+  });
+
+  test("a text edit touching text another pending one changes is refused, whoever proposes it", () => {
+    const document = applied(linked(), [{ op: "replace", block: "p2", quote: "🚀", with: "!" }, agent]);
+    expect(() => applyOperation(document, { op: "replace", block: "p2", quote: "Q3 🚀", with: "Q4" }, agent)).toThrow("c1 already changes this text (replace “🚀” in p2 with “!”): drop it first, or make one change that covers both.");
+    expect(() => applyOperation(document, { op: "insert", block: "p2", before: "🚀", text: "!" }, you)).toThrow("c1 already changes this text");
+    expect(applyOperation(document, { op: "replace", block: "p2", quote: "Q3", with: "Q4" }, agent).summary).toBe("Proposed c2: replace “Q3” in p2 with “Q4”.");
+    expect(applyOperation(document, { op: "comment", block: "p2", quote: "Q3 🚀", text: "Sure?" }, agent).summary).toStartWith("Proposed c2: comment");
   });
 });
 

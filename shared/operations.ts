@@ -1,6 +1,6 @@
 import type { AppAuthor } from "../mirador/api.ts";
-import { anchorIn, locate } from "./anchor.ts";
-import { checkedDocument, documentIdOf, isAnchored, type Change, type ChangeBody, type GoogleDoc, type Snapshot } from "./document.ts";
+import { anchorIn, locate, spanOf, spansOverlap } from "./anchor.ts";
+import { checkedDocument, documentIdOf, isAnchored, type Anchor, type Change, type ChangeBody, type GoogleDoc, type Snapshot } from "./document.ts";
 import { writtenChange } from "./write.ts";
 
 export interface Applied {
@@ -127,11 +127,32 @@ export const pendingDecisionOn = (changes: Change[], target: string) =>
 
 const decisionTarget = (body: ChangeBody) => (body.kind === "accept" || body.kind === "reject" ? body.suggestion : body.kind === "resolve" || (body.kind === "reply" && body.resolve) ? body.thread : null);
 
+const isTextEdit = (change: ChangeBody) => change.kind === "replace" || change.kind === "insert" || change.kind === "delete";
+
+/** The pending text edit that `body` would touch the same text as, which Send could put in only one of. */
+export function textEditClashing(document: GoogleDoc, body: ChangeBody): Change | undefined {
+  if (!isTextEdit(body) || !isAnchored(body as Change)) return undefined;
+  const snapshot = requireSnapshot(document);
+  const placed = (change: ChangeBody) => {
+    const located = locate((change as Change & { anchor: Anchor }).anchor, snapshot);
+    return "problem" in located ? null : { located, ...spanOf(change, located) };
+  };
+  const mine = placed(body);
+  if (!mine) return undefined;
+  return document.changes.find((change) => {
+    if (!isTextEdit(change)) return false;
+    const theirs = placed(change);
+    return theirs !== null && spansOverlap(mine, theirs);
+  });
+}
+
 function propose(document: GoogleDoc, operation: Operation, author: AppAuthor | undefined): Applied {
   const body = bodyOf(operation, requireSnapshot(document));
   const target = decisionTarget(body);
   const earlier = target && pendingDecisionOn(document.changes, target);
   if (earlier) throw new Error(`${earlier.id} already does that: ${changeSummary(earlier)}. Drop it first to decide otherwise.`);
+  const clash = textEditClashing(document, body);
+  if (clash) throw new Error(`${clash.id} already changes this text (${changeSummary(clash)}): drop it first, or make one change that covers both.`);
   const yours = author?.kind === "you";
   const change: Change = { ...body, id: `c${document.nextChange}`, by: yours ? "you" : "agent", approved: yours };
   return {
