@@ -352,6 +352,30 @@ function Stepper({ changes, open, onOpen }: { changes: Change[]; open: string | 
   );
 }
 
+type AuthorFilter = "all" | Change["by"];
+
+const bothAuthors = (changes: Change[]) => changes.some(({ by }) => by === "agent") && changes.some(({ by }) => by === "you");
+
+/** Narrows To send to the agent's changes or the user's, once it holds both. */
+function AuthorFilterRow({ changes, author, onAuthor }: { changes: Change[]; author: AuthorFilter; onAuthor(author: AuthorFilter): void }) {
+  if (!bothAuthors(changes)) return null;
+  const theAgents = changes.filter(({ by }) => by === "agent").length;
+  const options: { id: AuthorFilter; title: string; count: number }[] = [
+    { id: "all", title: "All", count: changes.length },
+    { id: "agent", title: "Agent", count: theAgents },
+    { id: "you", title: "You", count: changes.length - theAgents },
+  ];
+  return (
+    <div className="author-filter row" role="group" aria-label="Show changes by">
+      {options.map(({ id, title, count }) => (
+        <button key={id} aria-pressed={author === id} onClick={() => onAuthor(id)}>
+          {title} <span className="count">{count}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
 type SidebarTab = "changes" | "comments" | "suggestions";
 
 interface SidebarProps {
@@ -365,7 +389,11 @@ interface SidebarProps {
 function Sidebar({ document, focused, open, onFocus, onOpen }: SidebarProps) {
   const { snapshot, changes } = document;
   const approved = changes.filter((change) => change.approved).length;
-  const waiting = changes.length - approved;
+  const [chosenAuthor, setAuthor] = useState<AuthorFilter>("all");
+  const author = bothAuthors(changes) ? chosenAuthor : "all";
+  const shown = author === "all" ? changes : changes.filter(({ by }) => by === author);
+  const waitingShown = shown.filter((change) => !change.approved).map(({ id }) => id);
+  const approveShown = () => mirador().apply(author === "all" ? { op: "approve-all" } : { op: "approve", changes: waitingShown });
   const openThreads = snapshot.threads.filter((thread) => thread.status !== "resolved");
   const resolvedThreads = snapshot.threads.filter((thread) => thread.status === "resolved");
   const undecided = snapshot.suggestions.filter((suggestion) => !pendingDecisionOn(changes, suggestion.id));
@@ -407,11 +435,14 @@ function Sidebar({ document, focused, open, onFocus, onOpen }: SidebarProps) {
           (changes.length === 0 ? (
             <p className="quiet">Nothing to send yet. Select text in the doc to ask for a change, or ask the agent in the chat.</p>
           ) : (
+            <>
+            <AuthorFilterRow changes={changes} author={author} onAuthor={setAuthor} />
             <ul>
-              {changes.map((change) => (
+              {shown.map((change) => (
                 <ChangeCard key={change.id} change={change} direct={goesInDirectly(document, change)} {...card(change.id)} />
               ))}
             </ul>
+            </>
           ))}
         {tab === "comments" && (
           <>
@@ -437,13 +468,13 @@ function Sidebar({ document, focused, open, onFocus, onOpen }: SidebarProps) {
       </div>
       {changes.length > 0 && (
         <div className="send-bar">
-          <Stepper changes={changes} open={open} onOpen={onOpen} />
+          {shown.length > 0 && <Stepper changes={shown} open={open} onOpen={onOpen} />}
           <label className="switch">
             <input type="checkbox" checked={document.directEdits} onChange={(event) => mirador().apply({ op: "direct-edits", on: event.target.checked })} />
             My edits go in directly, not as suggestions
           </label>
           <div className="row">
-          {waiting > 0 && <button onClick={() => mirador().apply({ op: "approve-all" })}>Approve all</button>}
+          {waitingShown.length > 0 && <button onClick={approveShown}>{author === "all" ? "Approve all" : `Approve all ${author === "agent" ? "the agent's" : "yours"}`}</button>}
           <button className="primary" disabled={approved === 0} onClick={() => mirador().run("push")}>
             Send to Google Docs{approved ? ` (${approved})` : ""}
           </button>

@@ -441,3 +441,13 @@ button.chip {
   background: light-dark(#fef7e0, #4a3f12);
   color: light-dark(#b06000, #fdd663);
 }
+
+.author-filter button {
+  font-size: 12px;
+  padding: 1px 8px;
+  border-radius: 12px;
+}
+.author-filter button[aria-pressed="true"] {
+  border-color: light-dark(#0b57d0, #8ab4f8);
+  color: light-dark(#0b57d0, #8ab4f8);
+}

@@ -387,6 +387,31 @@ test("the agent proposes edits to a Google doc shown in Mirador; you select text
     await expect(toSend.locator(".new")).toHaveCount(0);
   });
 
+  await test.step("To send shows the agent's changes or yours; Approve all and the stepper follow what it shows", async () => {
+    await tab(page, "To send");
+    await select(page, "p4", "review");
+    const box = view(page).getByRole("dialog", { name: "Selected text" });
+    await box.getByRole("button", { name: "Comment…" }).click();
+    await box.getByLabel("What should change here?").fill("Who reviews?");
+    await box.getByRole("button", { name: "Comment", exact: true }).click();
+    await view(page).getByRole("button", { name: /^Agent/ }).click();
+    await expect(view(page).locator(".change")).toHaveCount(1);
+    await expect(view(page).locator(".change")).toContainText("replace “Notes” in p6 with “Open notes”");
+    await expect(view(page).locator(".stepper")).toContainText("1 to review");
+    await view(page).getByRole("button", { name: "Approve all the agent's" }).click();
+    await expect(view(page).locator(".change .badge")).toHaveText("Approved");
+    await view(page).getByRole("button", { name: /^You/ }).click();
+    await expect(view(page).locator(".change")).toContainText("comment on “review” in p4: “Who reviews?”");
+    await view(page).getByRole("button", { name: /^Agent/ }).click();
+    await tool(conversation, "apply", { op: { op: "drop", change: "c14" } });
+    await expect(view(page).locator(".author-filter")).toHaveCount(0);
+    await expect(view(page).locator(".change")).toContainText("comment on “review” in p4");
+    await tool(conversation, "apply", { op: { op: "replace", block: "p6", quote: "Notes", with: "Open notes" } });
+    await view(page).getByRole("button", { name: /^All/ }).click();
+    await expect(view(page).locator(".change")).toHaveCount(2);
+    await expect(view(page).getByRole("button", { name: "Send to Google Docs (1)" })).toBeVisible();
+  });
+
   await test.step("you sign in another Google account from the view", async () => {
     writeFileSync(join(gcloud.folder, "next-sign-in"), "ana@work.example.com\n");
     await view(page).getByRole("button", { name: "Sign in a Google account" }).click();
