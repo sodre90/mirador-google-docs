@@ -64,11 +64,17 @@ test.afterAll(async () => {
   google.server?.close();
 });
 
+/** The tests share one host, which keeps the workspace and the profile the first one added. */
+let workspaceAdded = false;
+
 async function startWithTheAgent(page: Page) {
   await mirador.signIn(page, host);
-  await mirador.addWorkspace(page, host.projectDir);
-  const profiles = await mirador.createProfile(page, profileName, "", "", "opencode");
-  await profiles.getByRole("button", { name: "Close" }).click();
+  if (!workspaceAdded) {
+    await mirador.addWorkspace(page, host.projectDir);
+    const profiles = await mirador.createProfile(page, profileName, "", "", "opencode");
+    await profiles.getByRole("button", { name: "Close" }).click();
+    workspaceAdded = true;
+  }
   await page.getByLabel("Agent", { exact: true }).selectOption({ label: `${profileName} · opencode` });
   const previousUrl = page.url();
   await page.getByRole("button", { name: "+ New conversation" }).click();
@@ -108,11 +114,27 @@ async function selectAcross(page: Page, from: [block: string, text: string], to:
       range.setEnd(end.node, end.offset);
       getSelection()!.removeAllRanges();
       getSelection()!.addRange(range);
-      end.node.parentElement!.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+      end.node.parentElement!.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
     }, [from, to]);
 }
 
 const select = (page: Page, block: string, text: string) => selectAcross(page, [block, text], [block, text]);
+
+/** Selects text as a phone's long press and handles do: the page hears no pointer let go, only the selection changing. */
+async function selectByHandles(page: Page, block: string, text: string) {
+  await view(page)
+    .locator(`[data-block="${block}"]`)
+    .evaluate((paragraph, text) => {
+      const walker = document.createTreeWalker(paragraph, NodeFilter.SHOW_TEXT);
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        const at = node.textContent!.indexOf(text);
+        if (at === -1) continue;
+        getSelection()!.setBaseAndExtent(node, at, node, at + text.length);
+        return;
+      }
+      throw new Error(`${text} isn't in one piece of ${paragraph.textContent}`);
+    }, text);
+}
 
 /** Puts the caret right after `text` in a paragraph, as a click there would, ready to type. */
 async function caretAfter(page: Page, block: string, text: string) {
@@ -432,5 +454,62 @@ test("the agent proposes edits to a Google doc shown in Mirador; you select text
     writeFileSync(join(gcloud.folder, "next-sign-in"), "ana@work.example.com\n");
     await view(page).getByRole("button", { name: "Sign in a Google account" }).click();
     await expect(view(page).locator(".task.done")).toHaveText("Signed in: ana@example.com, ana@work.example.com.");
+  });
+});
+
+test.describe("on a touch screen", () => {
+  test.use({ hasTouch: true });
+
+  test("the doc reads first and types after Edit; a long press asks the agent, the list folds away, and the boxes sit at the bottom", async ({ page }) => {
+    const conversation = await startWithTheAgent(page);
+    await tool(conversation, "app_open", { app: "google-docs", file: "on-a-phone.gdoc" });
+    await tool(conversation, "apply", { op: { op: "link", url: URL } });
+    await tool(conversation, "app_run", { task: "pull" });
+    await tool(conversation, "apply", { op: { op: "replace", block: "p6", quote: "Notes", with: "Open notes" } });
+    const p4 = view(page).locator('[data-block="p4"]');
+
+    await test.step("the doc can't be typed in until Edit, and the list is folded to its tabs", async () => {
+      await expect(p4).toHaveAttribute("contenteditable", "false");
+      await expect(view(page).getByRole("tab", { name: /^To send/ })).toHaveAttribute("aria-expanded", "false");
+      await expect(view(page).getByRole("tabpanel")).toBeHidden();
+      await expect(view(page).getByRole("button", { name: /^Send to Google Docs/ })).toBeVisible();
+    });
+
+    await test.step("a selection made by long press and handles offers to ask the agent, in a bar along the bottom", async () => {
+      await selectByHandles(page, "p4", "We ship");
+      const box = view(page).getByRole("dialog", { name: "Selected text" });
+      await expect(box).toHaveCSS("position", "fixed");
+      await expect(box).toHaveCSS("bottom", "0px");
+      await box.getByRole("button", { name: "Shorter" }).tap();
+      await expect(box).toBeHidden();
+      await expect.poll(prompts).toContain("About “We ship” in p4: Make this shorter, keeping what matters.");
+    });
+
+    await test.step("tapping marked text unfolds the list at its card, and tapping its tab folds it again", async () => {
+      await view(page).locator('[data-block="p6"] .mark-deleted').tap();
+      await expect(view(page).getByRole("tabpanel")).toBeVisible();
+      await expect(view(page).locator('.change[data-change="c1"]')).toHaveClass(/open/);
+      await view(page).getByRole("tab", { name: /^To send/ }).tap();
+      await expect(view(page).getByRole("tabpanel")).toBeHidden();
+    });
+
+    await test.step("after Edit you type; the list steps aside, the note on what will be sent sits at the bottom, and Enter from a phone's keyboard starts a line", async () => {
+      await view(page).getByRole("button", { name: "Edit" }).tap();
+      await expect(p4).toHaveAttribute("contenteditable", "true");
+      await caretAfter(page, "p4", "by Q3.");
+      await page.keyboard.type(" Then");
+      await expect(view(page).locator(".sidebar")).toBeHidden();
+      await expect(view(page).locator(".draft")).toHaveCSS("position", "fixed");
+      await p4.evaluate((paragraph) => {
+        const enter = new InputEvent("beforeinput", { inputType: "insertParagraph", bubbles: true, cancelable: true });
+        if (paragraph.dispatchEvent(enter)) throw new Error("Enter went through to the page");
+      });
+      await page.keyboard.type("party");
+      await view(page).getByRole("button", { name: "Done" }).tap();
+      await expect(p4).toHaveAttribute("contenteditable", "false");
+      await expect(view(page).locator(".sidebar")).toBeVisible();
+      await view(page).getByRole("tab", { name: /^To send/ }).tap();
+      await expect(view(page).locator('.change[data-change="c2"]')).toContainText("insert “ Then\nparty” after “Q3.” in p4");
+    });
   });
 });

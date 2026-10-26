@@ -7,6 +7,9 @@ import { Doc, selectionIn, type Selected, type SelectedPart } from "./Doc.tsx";
 
 const mirador = () => window.mirador;
 
+/** A phone or a tablet: the doc reads first and types after Edit, and its boxes sit at the bottom, clear of the keyboard and the selection handles. */
+const touchScreen = matchMedia("(pointer: coarse)").matches;
+
 function TaskLine({ state }: { state: AppDocumentState<GoogleDoc> }) {
   const { task, problem } = state;
   if (problem) return <p className="problem">The file can't be read: {problem}</p>;
@@ -277,7 +280,7 @@ function SelectionBox({ selected, onDone }: { selected: Selected; onDone(): void
   const [sent, setSent] = useState(false);
   const { parts } = selected;
   const oneParagraph = parts.length === 1;
-  const box = { top: selected.rect.bottom + window.scrollY + 6, left: Math.max(8, Math.min(selected.rect.left + window.scrollX, window.innerWidth - 340)) };
+  const box = touchScreen ? undefined : { top: selected.rect.bottom + window.scrollY + 6, left: Math.max(8, Math.min(selected.rect.left + window.scrollX, window.innerWidth - 340)) };
   const askFor = async (request: string) => {
     setSent(true);
     await mirador().prompt(rewriteRequest(parts, request));
@@ -291,7 +294,7 @@ function SelectionBox({ selected, onDone }: { selected: Selected; onDone(): void
   };
   if (!asking)
     return (
-      <div className="selection-box compact" style={box} role="dialog" aria-label="Selected text" onMouseDown={(event) => event.stopPropagation()}>
+      <div className="selection-box compact" style={box} role="dialog" aria-label="Selected text" onPointerDown={(event) => event.stopPropagation()}>
         <div className="row">
           <button onClick={() => setAsking(true)}>Ask the agent…</button>
           <button disabled={!oneParagraph} title={oneParagraph ? undefined : "A comment goes on text in one paragraph."} onClick={() => setAsking(true)}>
@@ -308,7 +311,7 @@ function SelectionBox({ selected, onDone }: { selected: Selected; onDone(): void
       </div>
     );
   return (
-    <div className="selection-box" style={box} role="dialog" aria-label="Selected text" onMouseDown={(event) => event.stopPropagation()}>
+    <div className="selection-box" style={box} role="dialog" aria-label="Selected text" onPointerDown={(event) => event.stopPropagation()}>
       <div className="quote">“{shortQuote(parts)}”</div>
       <textarea
         aria-label="What should change here?"
@@ -399,6 +402,17 @@ function Sidebar({ document, focused, open, onFocus, onOpen }: SidebarProps) {
   const undecided = snapshot.suggestions.filter((suggestion) => !pendingDecisionOn(changes, suggestion.id));
   const [chosen, setChosen] = useState<SidebarTab | null>(null);
   const [showResolved, setShowResolved] = useState(false);
+  /** On a touch screen the list folds away to its tabs, leaving the doc the room; the Send bar stays. */
+  const [folded, setFolded] = useState(touchScreen);
+  const stepping = useRef(false);
+  const stepTo = (id: string) => {
+    stepping.current = id !== open;
+    onOpen(id);
+  };
+  const choose = (id: SidebarTab) => {
+    setFolded(touchScreen && tab === id && !folded);
+    setChosen(id);
+  };
   /** The changes the user has had To send open for; the agent's others are new to them. */
   const [seen, setSeen] = useState(() => new Set(changes.map(({ id }) => id)));
   const tabOf = (id: string): SidebarTab | null =>
@@ -406,6 +420,8 @@ function Sidebar({ document, focused, open, onFocus, onOpen }: SidebarProps) {
   useEffect(() => {
     const tab = open && tabOf(open);
     if (tab) setChosen(tab);
+    if (tab && !stepping.current) setFolded(false);
+    stepping.current = false;
     if (open && resolvedThreads.some((thread) => thread.id === open)) setShowResolved(true);
   }, [open]);
   const tab: SidebarTab = chosen ?? (changes.length ? "changes" : openThreads.length || !undecided.length ? "comments" : "suggestions");
@@ -424,13 +440,13 @@ function Sidebar({ document, focused, open, onFocus, onOpen }: SidebarProps) {
     <aside className="sidebar">
       <div className="tabs" role="tablist">
         {tabs.map(({ id, title, count }) => (
-          <button key={id} role="tab" aria-selected={tab === id} onClick={() => setChosen(id)}>
+          <button key={id} role="tab" aria-selected={tab === id} aria-expanded={touchScreen ? !folded : undefined} onClick={() => choose(id)}>
             {title} <span className="count">{count}</span>
             {id === "changes" && tab !== "changes" && newFromTheAgent > 0 && <span className="new">{newFromTheAgent} new</span>}
           </button>
         ))}
       </div>
-      <div className="panel" role="tabpanel" aria-label={tabs.find(({ id }) => id === tab)!.title}>
+      <div className="panel" role="tabpanel" aria-label={tabs.find(({ id }) => id === tab)!.title} hidden={folded}>
         {tab === "changes" &&
           (changes.length === 0 ? (
             <p className="quiet">Nothing to send yet. Select text in the doc to ask for a change, or ask the agent in the chat.</p>
@@ -468,7 +484,7 @@ function Sidebar({ document, focused, open, onFocus, onOpen }: SidebarProps) {
       </div>
       {changes.length > 0 && (
         <div className="send-bar">
-          {shown.length > 0 && <Stepper changes={shown} open={open} onOpen={onOpen} />}
+          {shown.length > 0 && <Stepper changes={shown} open={open} onOpen={stepTo} />}
           <label className="switch">
             <input type="checkbox" checked={document.directEdits} onChange={(event) => mirador().apply({ op: "direct-edits", on: event.target.checked })} />
             My edits go in directly, not as suggestions
@@ -512,11 +528,14 @@ function DraftLine({ draft, docArea }: { draft: Draft; docArea: RefObject<HTMLDi
   });
   if (!place) return null;
   return (
-    <div className={draft.problem ? "draft refused" : "draft"} style={place} role="status">
+    <div className={draft.problem ? "draft refused" : "draft"} style={touchScreen ? undefined : place} role="status">
       {draft.text}
     </div>
   );
 }
+
+/** Shift and the arrows select while typing too, and that isn't a question for the agent. */
+const typingInAParagraph = () => (window.document.activeElement as HTMLElement | null)?.isContentEditable === true;
 
 /** Approve and Drop beside the text of the change that is open, so a review can stay in the doc. */
 function ChangeActions({ change, docArea }: { change: Change; docArea: RefObject<HTMLDivElement | null> }) {
@@ -529,7 +548,7 @@ function ChangeActions({ change, docArea }: { change: Change; docArea: RefObject
   });
   if (!place) return null;
   return (
-    <div className="change-actions" style={place} role="dialog" aria-label={`Change ${change.id}`} onMouseDown={(event) => event.stopPropagation()}>
+    <div className="change-actions" style={place} role="dialog" aria-label={`Change ${change.id}`} onPointerDown={(event) => event.stopPropagation()}>
       <span className="quiet">
         {change.id} · {change.by === "you" ? "You" : "Agent"}
       </span>
@@ -547,6 +566,11 @@ export function App({ state }: { state: AppDocumentState<GoogleDoc> }) {
   const docArea = useRef<HTMLDivElement>(null);
   const openChange = document.changes.find(({ id }) => id === open);
   const [draft, setDraft] = useState<Draft | null>(null);
+  const [typingOn, setTypingOn] = useState(!touchScreen);
+  const switchTyping = () => {
+    if (typingOn) (window.document.activeElement as HTMLElement | null)?.blur();
+    setTypingOn(!typingOn);
+  };
   /** A paragraph being typed in isn't drawn again until the user leaves it, so what it calls back with reads the doc as it is now. */
   const latest = useRef(document);
   latest.current = document;
@@ -572,21 +596,36 @@ export function App({ state }: { state: AppDocumentState<GoogleDoc> }) {
   useEffect(() => {
     const noted = document.snapshot;
     if (!noted) return;
-    const onMouseUp = (event: MouseEvent) => {
-      if (!docArea.current?.contains(event.target as Node)) return;
+    const offerToAsk = () => {
       const found = selectionIn(noted, window.getSelection());
       if (found) setSelected(found);
     };
-    const onMouseDown = () => setSelected(null);
+    let pressing = false;
+    const onPointerDown = () => {
+      pressing = true;
+      setSelected(null);
+    };
+    const pressEnded = (event: PointerEvent) => {
+      pressing = false;
+      if (docArea.current?.contains(event.target as Node)) setTimeout(offerToAsk, 0);
+    };
+    // A touch screen selects by a long press, which cancels the touch, and by handles the page never hears of.
+    const onSelectionChange = () => {
+      if (!pressing && !typingInAParagraph()) offerToAsk();
+    };
     const onTyping = (event: Event) => {
       if (docArea.current?.contains(event.target as Node)) setSelected(null);
     };
-    window.addEventListener("mouseup", onMouseUp);
-    window.addEventListener("mousedown", onMouseDown);
+    window.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("pointerup", pressEnded);
+    window.addEventListener("pointercancel", pressEnded);
+    window.document.addEventListener("selectionchange", onSelectionChange);
     window.addEventListener("input", onTyping);
     return () => {
-      window.removeEventListener("mouseup", onMouseUp);
-      window.removeEventListener("mousedown", onMouseDown);
+      window.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("pointerup", pressEnded);
+      window.removeEventListener("pointercancel", pressEnded);
+      window.document.removeEventListener("selectionchange", onSelectionChange);
       window.removeEventListener("input", onTyping);
     };
   }, [document.snapshot]);
@@ -611,6 +650,11 @@ export function App({ state }: { state: AppDocumentState<GoogleDoc> }) {
           <button disabled={running} onClick={() => mirador().run("sign-in")}>
             Sign in a Google account
           </button>
+          {touchScreen && document.snapshot && (
+            <button aria-pressed={typingOn} onClick={switchTyping}>
+              {typingOn ? "Done" : "Edit"}
+            </button>
+          )}
         </div>
       </header>
       <TaskLine state={state} />
@@ -626,7 +670,7 @@ export function App({ state }: { state: AppDocumentState<GoogleDoc> }) {
       ) : (
         <div className="body">
           <div className="doc" ref={docArea}>
-            <Doc snapshot={document.snapshot} changes={document.changes} focused={focused ?? open} onFocus={setFocused} onOpen={setOpen} onWrite={write} onTyping={typing} />
+            <Doc snapshot={document.snapshot} changes={document.changes} editable={typingOn} focused={focused ?? open} onFocus={setFocused} onOpen={setOpen} onWrite={write} onTyping={typing} />
           </div>
           <Sidebar document={{ ...document, snapshot: document.snapshot }} focused={focused} open={open} onFocus={setFocused} onOpen={openShowingText} />
         </div>

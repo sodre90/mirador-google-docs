@@ -1,4 +1,4 @@
-import { memo, useMemo, useState, type FocusEvent, type KeyboardEvent } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type FocusEvent } from "react";
 import { OBJECT_MARK, type Block, type Change, type Paragraph, type Snapshot } from "../shared/document.ts";
 import { editedText, unwritable } from "../shared/write.ts";
 import { marksOf, piecesOf, type Mark, type Piece } from "./marks.ts";
@@ -8,6 +8,8 @@ const TAGS: Record<string, "h1" | "h2" | "h3" | "h4" | "h5" | "h6"> = { TITLE: "
 interface Props {
   snapshot: Snapshot;
   changes: Change[];
+  /** Whether the user can type in the doc now; a touch screen turns it on with Edit. */
+  editable: boolean;
   focused: string | null;
   onFocus(id: string | null): void;
   /** Clicking marked text opens what marks it in the sidebar. */
@@ -76,12 +78,27 @@ function typedText(paragraph: HTMLElement): string {
   return textOf(paragraph).replaceAll(CARET_HOLDER, "");
 }
 
+/** Enter as the input it asks for rather than as a key: a phone's keyboard may send no key for it. */
+function breakLineOnEnter(event: InputEvent) {
+  if (event.inputType !== "insertParagraph" && event.inputType !== "insertLineBreak") return;
+  if (!(event.target as Element).closest(".writable")) return;
+  event.preventDefault();
+  const selection = window.getSelection();
+  const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+  if (!range) return;
+  range.deleteContents();
+  const lineBreak = document.createTextNode(`\n${CARET_HOLDER}`);
+  range.insertNode(lineBreak);
+  selection!.collapse(lineBreak, lineBreak.length);
+}
+
 interface ParagraphProps extends Shared {
   paragraph: Paragraph;
   marks: Mark[];
   /** The paragraph's text with the user's own edits made, as they type on from. */
   written: string;
   editing: boolean;
+  editable: boolean;
   onEditing(block: string | null): void;
   onWrite(block: string, text: string): void;
   onTyping: Props["onTyping"];
@@ -89,41 +106,30 @@ interface ParagraphProps extends Shared {
 
 /** While the user types in a paragraph, React leaves it alone: the text they typed is in the page, not in its pieces. */
 const ParagraphView = memo(
-  function ParagraphView({ paragraph, marks, written, focused, onFocus, onOpen, onEditing, onWrite, onTyping }: ParagraphProps) {
+  function ParagraphView({ paragraph, marks, written, editable, focused, onFocus, onOpen, onEditing, onWrite, onTyping }: ParagraphProps) {
     const Tag = TAGS[paragraph.style] ?? "p";
     const pieces = piecesOf(paragraph, marks);
-    const problem = unwritable(paragraph);
-    const className = [paragraph.style === "SUBTITLE" && "subtitle", paragraph.bullet && "bullet", !problem && "writable"].filter(Boolean).join(" ") || undefined;
+    const problem = editable ? unwritable(paragraph) : null;
+    const writable = editable && !problem;
+    const className = [paragraph.style === "SUBTITLE" && "subtitle", paragraph.bullet && "bullet", writable && "writable"].filter(Boolean).join(" ") || undefined;
     const leave = (event: FocusEvent<HTMLElement>) => {
       onEditing(null);
       onTyping(paragraph.id, null);
       const text = typedText(event.currentTarget);
       if (text !== written) onWrite(paragraph.id, text);
     };
-    const newLineOnEnter = (event: KeyboardEvent<HTMLElement>) => {
-      if (event.key !== "Enter") return;
-      event.preventDefault();
-      const selection = window.getSelection();
-      const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
-      if (!range) return;
-      range.deleteContents();
-      const lineBreak = document.createTextNode(`\n${CARET_HOLDER}`);
-      range.insertNode(lineBreak);
-      selection!.collapse(lineBreak, lineBreak.length);
-    };
     return (
       <Tag
         className={className}
         data-block={paragraph.id}
         style={paragraph.bullet && { marginInlineStart: `${1.5 + paragraph.bullet.nesting * 1.5}em` }}
-        contentEditable={!problem}
+        contentEditable={writable}
         suppressContentEditableWarning
         spellCheck={false}
         title={problem ?? undefined}
         onFocus={() => onEditing(paragraph.id)}
-        onBlur={problem ? undefined : leave}
-        onKeyDown={problem ? undefined : newLineOnEnter}
-        onInput={problem ? undefined : (event) => onTyping(paragraph.id, typedText(event.currentTarget))}
+        onBlur={writable ? leave : undefined}
+        onInput={writable ? (event) => onTyping(paragraph.id, typedText(event.currentTarget)) : undefined}
       >
         {pieces.map((piece, index) => (piece.kind === "text" ? <TextPiece key={index} piece={piece} focused={focused} onFocus={onFocus} onOpen={onOpen} /> : <AddedPiece key={index} mark={piece.mark} text={piece.text} focused={focused} onOpen={onOpen} />))}
         {paragraph.text === "" && pieces.length === 0 && <br />}
@@ -133,7 +139,7 @@ const ParagraphView = memo(
   (before, after) => before.editing && after.editing,
 );
 
-function BlockView({ block, ...rest }: { block: Block; marks: Map<string, Mark[]>; written: (paragraph: Paragraph) => string; editing: string | null; onEditing(block: string | null): void; onWrite: Props["onWrite"]; onTyping: Props["onTyping"] } & Shared) {
+function BlockView({ block, ...rest }: { block: Block; marks: Map<string, Mark[]>; written: (paragraph: Paragraph) => string; editing: string | null; editable: boolean; onEditing(block: string | null): void; onWrite: Props["onWrite"]; onTyping: Props["onTyping"] } & Shared) {
   if (block.kind === "table")
     return (
       <table data-block={block.id}>
@@ -156,8 +162,14 @@ function BlockView({ block, ...rest }: { block: Block; marks: Map<string, Mark[]
 const editOfMark = ({ kind, start, end, added }: Mark) => (kind === "point" ? { start: added!.at, end: added!.at, text: added!.text } : { start, end, text: added?.text ?? "" });
 
 /** The doc as Google shows it, with the pending changes and the open threads marked in its text; the user types into its paragraphs. */
-export function Doc({ snapshot, changes, focused, onFocus, onOpen, onWrite, onTyping }: Props) {
+export function Doc({ snapshot, changes, editable, focused, onFocus, onOpen, onWrite, onTyping }: Props) {
   const marks = useMemo(() => marksOf(snapshot, changes), [snapshot, changes]);
+  const page = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const article = page.current!;
+    article.addEventListener("beforeinput", breakLineOnEnter);
+    return () => article.removeEventListener("beforeinput", breakLineOnEnter);
+  }, []);
   const [editing, setEditing] = useState<string | null>(null);
   /** Bumped when the user leaves a paragraph, so React draws it afresh rather than on top of what they typed. */
   const [drawn, setDrawn] = useState<Record<string, number>>({});
@@ -168,12 +180,12 @@ export function Doc({ snapshot, changes, focused, onFocus, onOpen, onWrite, onTy
     setEditing(block);
   };
   return (
-    <article className="page">
+    <article className="page" ref={page}>
       {snapshot.tabs.map((tab) => (
         <section key={tab.id} data-tab={tab.id}>
           {snapshot.tabs.length > 1 && <div className="tab-title">{tab.title}</div>}
           {tab.blocks.map((block) => (
-            <BlockView key={`${block.id}:${drawn[block.id] ?? 0}`} block={block} marks={marks} written={written} editing={editing} onEditing={onEditing} onWrite={write} onTyping={onTyping} focused={focused} onFocus={onFocus} onOpen={onOpen} />
+            <BlockView key={`${block.id}:${drawn[block.id] ?? 0}`} block={block} marks={marks} written={written} editing={editing} editable={editable} onEditing={onEditing} onWrite={write} onTyping={onTyping} focused={focused} onFocus={onFocus} onOpen={onOpen} />
           ))}
         </section>
       ))}

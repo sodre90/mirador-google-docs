@@ -451,3 +451,29 @@ button.chip {
   border-color: light-dark(#0b57d0, #8ab4f8);
   color: light-dark(#0b57d0, #8ab4f8);
 }
+
+.panel[hidden] {
+  display: none;
+}
+@media (pointer: coarse) {
+  .selection-box,
+  .selection-box.compact,
+  .draft {
+    position: fixed;
+    inset: auto 0 0 0;
+    width: auto;
+    border-radius: 12px 12px 0 0;
+    padding: 10px 12px 14px;
+  }
+  .draft {
+    font-size: 13px;
+  }
+  .app:has(.writable:focus) .sidebar {
+    display: none;
+  }
+  .card-head,
+  .tabs button,
+  .stepper button {
+    min-height: 40px;
+  }
+}
