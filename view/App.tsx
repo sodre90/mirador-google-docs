@@ -263,6 +263,14 @@ const shortQuote = (parts: SelectedPart[]) => {
   return text.length > 80 ? `${text.slice(0, 80)}…` : text;
 };
 
+/** One-click asks for what most selections end in. */
+const QUICK_REWRITES = [
+  { label: "Tighten", words: "Tighten this: say the same in fewer, plainer words." },
+  { label: "Fix grammar", words: "Fix the grammar, spelling and punctuation; change nothing else." },
+  { label: "More formal", words: "Make this more formal, keeping its meaning." },
+  { label: "Shorter", words: "Make this shorter, keeping what matters." },
+];
+
 function SelectionBox({ selected, onDone }: { selected: Selected; onDone(): void }) {
   const [asking, setAsking] = useState(false);
   const [words, setWords] = useState("");
@@ -270,11 +278,12 @@ function SelectionBox({ selected, onDone }: { selected: Selected; onDone(): void
   const { parts } = selected;
   const oneParagraph = parts.length === 1;
   const box = { top: selected.rect.bottom + window.scrollY + 6, left: Math.max(8, Math.min(selected.rect.left + window.scrollX, window.innerWidth - 340)) };
-  const ask = async () => {
+  const askFor = async (request: string) => {
     setSent(true);
-    await mirador().prompt(rewriteRequest(parts, words));
+    await mirador().prompt(rewriteRequest(parts, request));
     onDone();
   };
+  const ask = () => askFor(words);
   const comment = () => {
     const [{ block, quote, at }] = parts;
     mirador().apply({ op: "comment", block, quote, at, text: words.trim() });
@@ -288,6 +297,13 @@ function SelectionBox({ selected, onDone }: { selected: Selected; onDone(): void
           <button disabled={!oneParagraph} title={oneParagraph ? undefined : "A comment goes on text in one paragraph."} onClick={() => setAsking(true)}>
             Comment…
           </button>
+        </div>
+        <div className="row chips">
+          {QUICK_REWRITES.map(({ label, words }) => (
+            <button key={label} className="chip" disabled={sent} onClick={() => askFor(words)}>
+              {label}
+            </button>
+          ))}
         </div>
       </div>
     );

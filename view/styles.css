@@ -408,3 +408,12 @@ button.link {
   align-items: center;
   font-size: 12px;
 }
+
+.chips {
+  margin-top: 4px;
+}
+button.chip {
+  font-size: 12px;
+  padding: 1px 8px;
+  border-radius: 12px;
+}

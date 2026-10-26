@@ -175,6 +175,14 @@ test("the agent proposes edits to a Google doc shown in Mirador; you select text
     expect(prompts()).toContain('{"op":"replace","block":"p4","quote":"We ship","at":0,"with":"…"}');
   });
 
+  await test.step("a quick rewrite asks the agent in one click", async () => {
+    await select(page, "p6", "Notes by Q3");
+    const box = view(page).getByRole("dialog", { name: "Selected text" });
+    await box.getByRole("button", { name: "Fix grammar" }).click();
+    await expect(box).toBeHidden();
+    await expect.poll(prompts).toContain("About “Notes by Q3” in p6: Fix the grammar, spelling and punctuation; change nothing else.");
+  });
+
   await test.step("you select across paragraphs and ask the agent about all of it; a comment needs one paragraph", async () => {
     await selectAcross(page, ["p4", "review by Q3."], ["p5", "Budget:"]);
     const box = view(page).getByRole("dialog", { name: "Selected text" });
