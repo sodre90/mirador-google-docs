@@ -454,6 +454,39 @@ function Sidebar({ document, focused, open, onFocus, onOpen }: SidebarProps) {
   );
 }
 
+/** What leaving the paragraph the user types in would send, or why it can't be sent. */
+interface Draft {
+  block: string;
+  text: string;
+  problem: boolean;
+}
+
+function draftOf(document: GoogleDoc, block: string, typed: string): Draft | null {
+  try {
+    const { body, replaces } = writtenChange(document.snapshot!, document.changes, block, typed);
+    if (body) return { block, text: `Will send: ${changeSummary(body)}`, problem: false };
+    return replaces.length ? { block, text: "Will take back your edits here.", problem: false } : null;
+  } catch (error) {
+    return { block, text: (error as Error).message, problem: true };
+  }
+}
+
+/** Under the paragraph being typed in, so the user sees what they will send before they leave it. */
+function DraftLine({ draft, docArea }: { draft: Draft; docArea: RefObject<HTMLDivElement | null> }) {
+  const [place, setPlace] = useState<{ top: number; left: number } | null>(null);
+  useLayoutEffect(() => {
+    const rect = docArea.current?.querySelector(`[data-block="${CSS.escape(draft.block)}"]`)?.getBoundingClientRect();
+    const next = rect ? { top: rect.bottom + window.scrollY + 2, left: rect.left + window.scrollX } : null;
+    setPlace((now) => (now?.top === next?.top && now?.left === next?.left ? now : next));
+  });
+  if (!place) return null;
+  return (
+    <div className={draft.problem ? "draft refused" : "draft"} style={place} role="status">
+      {draft.text}
+    </div>
+  );
+}
+
 /** Approve and Drop beside the text of the change that is open, so a review can stay in the doc. */
 function ChangeActions({ change, docArea }: { change: Change; docArea: RefObject<HTMLDivElement | null> }) {
   const [place, setPlace] = useState<{ top: number; left: number } | null>(null);
@@ -482,7 +515,13 @@ export function App({ state }: { state: AppDocumentState<GoogleDoc> }) {
   const [notice, setNotice] = useState<string | null>(null);
   const docArea = useRef<HTMLDivElement>(null);
   const openChange = document.changes.find(({ id }) => id === open);
+  const [draft, setDraft] = useState<Draft | null>(null);
+  /** A paragraph being typed in isn't drawn again until the user leaves it, so what it calls back with reads the doc as it is now. */
+  const latest = useRef(document);
+  latest.current = document;
+  const typing = (block: string, text: string | null) => setDraft(text === null ? null : draftOf(latest.current, block, text));
   const write = (block: string, text: string) => {
+    const document = latest.current;
     try {
       writtenChange(document.snapshot!, document.changes, block, text);
     } catch (error) {
@@ -556,12 +595,13 @@ export function App({ state }: { state: AppDocumentState<GoogleDoc> }) {
       ) : (
         <div className="body">
           <div className="doc" ref={docArea}>
-            <Doc snapshot={document.snapshot} changes={document.changes} focused={focused ?? open} onFocus={setFocused} onOpen={setOpen} onWrite={write} />
+            <Doc snapshot={document.snapshot} changes={document.changes} focused={focused ?? open} onFocus={setFocused} onOpen={setOpen} onWrite={write} onTyping={typing} />
           </div>
           <Sidebar document={{ ...document, snapshot: document.snapshot }} focused={focused} open={open} onFocus={setFocused} onOpen={openShowingText} />
         </div>
       )}
-      {openChange && !selected && <ChangeActions change={openChange} docArea={docArea} />}
+      {draft && <DraftLine draft={draft} docArea={docArea} />}
+      {openChange && !selected && !draft && <ChangeActions change={openChange} docArea={docArea} />}
       {selected && (
         <SelectionBox
           selected={selected}

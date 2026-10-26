@@ -426,3 +426,18 @@ button.chip {
   background: light-dark(#0b57d0, #8ab4f8);
   color: light-dark(#fff, #062e6f);
 }
+
+.draft {
+  position: absolute;
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: light-dark(#e8f0fe, #1f3354);
+  color: light-dark(#0b57d0, #8ab4f8);
+  pointer-events: none;
+  z-index: 9;
+}
+.draft.refused {
+  background: light-dark(#fef7e0, #4a3f12);
+  color: light-dark(#b06000, #fdd663);
+}

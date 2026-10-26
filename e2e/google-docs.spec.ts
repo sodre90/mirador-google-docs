@@ -313,7 +313,9 @@ test("the agent proposes edits to a Google doc shown in Mirador; you select text
     await expect(view(page).locator('[data-block="p5"]')).toHaveAttribute("contenteditable", "false");
     await caretAfter(page, "p4", "ship");
     await page.keyboard.type(" soon");
+    await expect(view(page).locator(".draft")).toHaveText("Will send: insert “soon ” after “ship ” in p4");
     await view(page).locator("h2").click();
+    await expect(view(page).locator(".draft")).toHaveCount(0);
     await expect(view(page).locator(".change")).toHaveCount(1);
     await expect(view(page).locator(".change")).toContainText("insert “soon ” after “ship ” in p4");
     await expect(p4).toHaveText("We ship soon by Q3 and review by Q3.");
@@ -337,6 +339,7 @@ test("the agent proposes edits to a Google doc shown in Mirador; you select text
     await expect(view(page).locator('[data-block="p2"] .mark-deleted')).toHaveText("planned");
     await caretAfter(page, "p2", "plan");
     await page.keyboard.type("s");
+    await expect(view(page).locator(".draft.refused")).toHaveText("The agent's change c12 is on this text: approve or drop it first, then type here.");
     await view(page).locator("h2").click();
     await expect(view(page).locator(".problem")).toHaveText("The agent's change c12 is on this text: approve or drop it first, then type here. OK");
     await expect(view(page).locator('[data-block="p2"]')).not.toContainText("plans");
