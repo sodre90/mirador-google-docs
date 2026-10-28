@@ -435,7 +435,7 @@ function Sidebar({ document, focused, open, onFocus, onOpen }: SidebarProps) {
   useEffect(() => {
     const tab = open && tabOf(open);
     if (tab) setChosen(tab);
-    if (tab && !stepping.current) setFolded(false);
+    if (tab && !stepping.current && !typingInAParagraph()) setFolded(false);
     stepping.current = false;
     if (open && resolvedThreads.some((thread) => thread.id === open)) setShowResolved(true);
   }, [open]);
@@ -451,17 +451,33 @@ function Sidebar({ document, focused, open, onFocus, onOpen }: SidebarProps) {
     { id: "suggestions", title: "Suggestions", count: undecided.length },
   ];
   const threadCard = (thread: Thread) => <ThreadCard key={thread.id} thread={thread} decision={pendingDecisionOn(changes, thread.id)} {...card(thread.id)} />;
+  const tabList = (
+    <div className="tabs" role="tablist">
+      {tabs.map(({ id, title, count }) => (
+        <button key={id} role="tab" aria-selected={tab === id} aria-expanded={touchScreen ? !folded : undefined} onClick={() => choose(id)}>
+          {title} <span className="count">{count}</span>
+          {id === "changes" && tab !== "changes" && newFromTheAgent > 0 && <span className="new">{newFromTheAgent} new</span>}
+        </button>
+      ))}
+    </div>
+  );
+  const sendButton = (
+    <button className="primary" disabled={approved === 0} onClick={() => mirador().run("push")}>
+      Send{touchScreen ? "" : " to Google Docs"}{approved ? ` (${approved})` : ""}
+    </button>
+  );
+  if (folded)
+    return (
+      <aside className="sidebar folded">
+        {tabList}
+        {changes.length > 0 && sendButton}
+      </aside>
+    );
   return (
     <aside className="sidebar">
-      <div className="tabs" role="tablist">
-        {tabs.map(({ id, title, count }) => (
-          <button key={id} role="tab" aria-selected={tab === id} aria-expanded={touchScreen ? !folded : undefined} onClick={() => choose(id)}>
-            {title} <span className="count">{count}</span>
-            {id === "changes" && tab !== "changes" && newFromTheAgent > 0 && <span className="new">{newFromTheAgent} new</span>}
-          </button>
-        ))}
-      </div>
-      <div className="panel" role="tabpanel" aria-label={tabs.find(({ id }) => id === tab)!.title} hidden={folded}>
+      {touchScreen && <button className="handle" aria-label="Fold the list" onClick={() => setFolded(true)} />}
+      {tabList}
+      <div className="panel" role="tabpanel" aria-label={tabs.find(({ id }) => id === tab)!.title}>
         {tab === "changes" &&
           (changes.length === 0 ? (
             <p className="quiet">Nothing to send yet. Select text in the doc to ask for a change, or ask the agent in the chat.</p>
@@ -506,9 +522,7 @@ function Sidebar({ document, focused, open, onFocus, onOpen }: SidebarProps) {
           </label>
           <div className="row">
           {waitingShown.length > 0 && <button onClick={approveShown}>{author === "all" ? "Approve all" : `Approve all ${author === "agent" ? "the agent's" : "yours"}`}</button>}
-          <button className="primary" disabled={approved === 0} onClick={() => mirador().run("push")}>
-            Send to Google Docs{approved ? ` (${approved})` : ""}
-          </button>
+          {sendButton}
           </div>
         </div>
       )}
@@ -545,6 +559,32 @@ function DraftLine({ draft, docArea }: { draft: Draft; docArea: RefObject<HTMLDi
   return (
     <div className={draft.problem ? "draft refused" : "draft"} style={touchScreen ? undefined : place} role="status">
       {draft.text}
+    </div>
+  );
+}
+
+/** The header's actions on a touch screen, which leaves the doc the room: the pencil, not the header, turns on typing. */
+function MoreMenu({ children }: { children: React.ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const menu = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const closeOutside = (event: PointerEvent) => {
+      if (!menu.current?.contains(event.target as Node)) setOpen(false);
+    };
+    window.addEventListener("pointerdown", closeOutside);
+    return () => window.removeEventListener("pointerdown", closeOutside);
+  }, [open]);
+  return (
+    <div className="more" ref={menu}>
+      <button aria-label="More" aria-expanded={open} onClick={() => setOpen(!open)}>
+        ⋮
+      </button>
+      {open && (
+        <div className="menu" role="menu" onClick={() => setOpen(false)}>
+          {children}
+        </div>
+      )}
     </div>
   );
 }
@@ -603,6 +643,19 @@ export function App({ state }: { state: AppDocumentState<GoogleDoc> }) {
     mirador().apply({ op: "write", block, text });
   };
   const running = state.task?.state === "running";
+  const readAt = document.snapshot && new Date(document.snapshot.pulledAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const actions = (
+    <>
+      {document.url && (
+        <button disabled={running} onClick={() => mirador().run("pull")}>
+          {document.snapshot ? "Read again" : "Read the doc"}
+        </button>
+      )}
+      <button disabled={running} onClick={() => mirador().run("sign-in")}>
+        Sign in a Google account
+      </button>
+    </>
+  );
   const openShowingText = (id: string | null) => {
     setOpen(id);
     setFocused(null);
@@ -651,28 +704,22 @@ export function App({ state }: { state: AppDocumentState<GoogleDoc> }) {
       <header>
         <div className="title">
           <h2>{document.snapshot?.title ?? "Google Docs"}</h2>
-          {document.snapshot && (
-            <span className="quiet">
-              {document.snapshot.account} · read {new Date(document.snapshot.pulledAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-            </span>
-          )}
+          {document.snapshot && <span className="quiet">{touchScreen ? `read ${readAt}` : `${document.snapshot.account} · read ${readAt}`}</span>}
         </div>
-        <div className="row">
-          {document.url && (
-            <button disabled={running} onClick={() => mirador().run("pull")}>
-              {document.snapshot ? "Read again" : "Read the doc"}
-            </button>
-          )}
-          <button disabled={running} onClick={() => mirador().run("sign-in")}>
-            Sign in a Google account
-          </button>
-          {touchScreen && document.snapshot && (
-            <button aria-pressed={typingOn} onClick={switchTyping}>
-              {typingOn ? "Done" : "Edit"}
-            </button>
-          )}
-        </div>
+        {touchScreen ? (
+          <MoreMenu>
+            {document.snapshot && <p className="quiet">Read as {document.snapshot.account}</p>}
+            {actions}
+          </MoreMenu>
+        ) : (
+          <div className="row">{actions}</div>
+        )}
       </header>
+      {touchScreen && document.snapshot && (
+        <button className="pencil" aria-label={typingOn ? "Done" : "Edit"} aria-pressed={typingOn} onClick={switchTyping}>
+          {typingOn ? "✓" : "✎"}
+        </button>
+      )}
       <TaskLine state={state} />
       {notice && (
         <p className="problem">

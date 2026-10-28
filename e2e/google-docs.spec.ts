@@ -458,9 +458,9 @@ test("the agent proposes edits to a Google doc shown in Mirador; you select text
 });
 
 test.describe("on a touch screen", () => {
-  test.use({ hasTouch: true });
+  test.use({ hasTouch: true, viewport: { width: 1000, height: 900 } });
 
-  test("the doc reads first and types after Edit; a long press asks the agent, the list folds away, and the boxes sit at the bottom", async ({ page }) => {
+  test("the doc reads first and types after the pencil; a long press asks the agent, the list is a slim bar that opens as a sheet, and the boxes sit at the bottom", async ({ page }) => {
     const conversation = await startWithTheAgent(page);
     await tool(conversation, "app_open", { app: "google-docs", file: "on-a-phone.gdoc" });
     await tool(conversation, "apply", { op: { op: "link", url: URL } });
@@ -468,11 +468,24 @@ test.describe("on a touch screen", () => {
     await tool(conversation, "apply", { op: { op: "replace", block: "p6", quote: "Notes", with: "Open notes" } });
     const p4 = view(page).locator('[data-block="p4"]');
 
-    await test.step("the doc can't be typed in until Edit, and the list is folded to its tabs", async () => {
+    await test.step("the doc reads edge to edge and can't be typed in until the pencil; the list is one slim bar of counts and Send", async () => {
       await expect(p4).toHaveAttribute("contenteditable", "false");
+      await expect(view(page).locator(".page")).toHaveCSS("box-shadow", "none");
       await expect(view(page).getByRole("tab", { name: /^To send/ })).toHaveAttribute("aria-expanded", "false");
       await expect(view(page).getByRole("tabpanel")).toBeHidden();
-      await expect(view(page).getByRole("button", { name: /^Send to Google Docs/ })).toBeVisible();
+      await expect(view(page).getByRole("button", { name: "Approve all" })).toBeHidden();
+      await expect(view(page).getByRole("button", { name: "Send", exact: true })).toBeVisible();
+      await expect(view(page).getByRole("button", { name: "Edit" })).toHaveCSS("position", "fixed");
+    });
+
+    await test.step("Read again and signing in wait in the ⋮ menu, with the account the doc was read as", async () => {
+      await expect(view(page).getByRole("button", { name: "Read again" })).toBeHidden();
+      await view(page).getByRole("button", { name: "More" }).tap();
+      const menu = view(page).getByRole("menu");
+      await expect(menu).toContainText("Read as ana@example.com");
+      await menu.getByRole("button", { name: "Read again" }).tap();
+      await expect(menu).toBeHidden();
+      await expect(view(page).locator(".task.done")).toContainText("Read “Launch plan” as ana@example.com");
     });
 
     await test.step("a selection made by long press and handles offers to ask the agent, in a bar along the bottom", async () => {
@@ -485,15 +498,21 @@ test.describe("on a touch screen", () => {
       await expect.poll(prompts).toContain("About “We ship” in p4: Make this shorter, keeping what matters.");
     });
 
-    await test.step("tapping marked text unfolds the list at its card, and tapping its tab folds it again", async () => {
+    await test.step("tapping marked text opens the list as a sheet at its card; its tab or its handle folds it again", async () => {
       await view(page).locator('[data-block="p6"] .mark-deleted').tap();
       await expect(view(page).getByRole("tabpanel")).toBeVisible();
       await expect(view(page).locator('.change[data-change="c1"]')).toHaveClass(/open/);
+      await expect(view(page).getByRole("button", { name: "Approve all" })).toBeVisible();
+      await expect(view(page).getByRole("button", { name: "Edit" })).toBeHidden();
       await view(page).getByRole("tab", { name: /^To send/ }).tap();
+      await expect(view(page).getByRole("tabpanel")).toBeHidden();
+      await view(page).getByRole("tab", { name: /^Comments/ }).tap();
+      await expect(view(page).getByRole("tabpanel", { name: "Comments" })).toBeVisible();
+      await view(page).getByRole("button", { name: "Fold the list" }).tap();
       await expect(view(page).getByRole("tabpanel")).toBeHidden();
     });
 
-    await test.step("after Edit you type; the list steps aside, Done stays at the top, the note on what will be sent sits at the bottom, and Enter from a phone's keyboard starts a line", async () => {
+    await test.step("after the pencil you type; the list steps aside, Done stays at hand above the keyboard, the note on what will be sent sits at the bottom, and Enter from a phone's keyboard starts a line", async () => {
       await view(page).getByRole("button", { name: "Edit" }).tap();
       await expect(p4).toHaveAttribute("contenteditable", "true");
       await caretAfter(page, "p4", "by Q3.");
@@ -501,7 +520,11 @@ test.describe("on a touch screen", () => {
       await expect(view(page).locator(".sidebar")).toBeHidden();
       await expect(view(page).locator(".draft")).toHaveCSS("position", "fixed");
       await expect(view(page).locator(".draft")).toHaveCSS("bottom", "0px");
-      await expect(view(page).locator("header")).toHaveCSS("position", "sticky");
+      await expect(view(page).getByRole("button", { name: "Done" })).toBeVisible();
+      await view(page).locator('[data-block="p6"] .mark-deleted').tap();
+      await expect(view(page).getByRole("button", { name: "Done" })).toBeVisible();
+      await expect(p4.locator(".added.mine")).toHaveText(" Then");
+      await caretAfter(page, "p4", "Then");
       await p4.evaluate((paragraph) => {
         const enter = new InputEvent("beforeinput", { inputType: "insertParagraph", bubbles: true, cancelable: true });
         if (paragraph.dispatchEvent(enter)) throw new Error("Enter went through to the page");
@@ -511,7 +534,7 @@ test.describe("on a touch screen", () => {
       await expect(p4).toHaveAttribute("contenteditable", "false");
       await expect(view(page).locator(".sidebar")).toBeVisible();
       await view(page).getByRole("tab", { name: /^To send/ }).tap();
-      await expect(view(page).locator('.change[data-change="c2"]')).toContainText("insert “ Then\nparty” after “Q3.” in p4");
+      await expect(view(page).locator(".change").last()).toContainText("insert “ Then\nparty” after “Q3.” in p4");
     });
   });
 });
