@@ -54,10 +54,10 @@ describe("pull", () => {
 
   test("says to sign in when nobody is, when a session ended, or when no account may read the doc", async () => {
     writeFileSync(join(gcloud.folder, "accounts"), "");
-    expect(run(pull, checkedDocument({ url: URL }))).rejects.toThrow("No Google account is signed in yet");
+    await expect(run(pull, checkedDocument({ url: URL }))).rejects.toThrow("No Google account is signed in yet");
     writeFileSync(join(gcloud.folder, "accounts"), "home@example.com\nwork@example.com\n");
     writeFileSync(join(gcloud.folder, "expired"), "work@example.com\n");
-    expect(run(pull, checkedDocument({ url: URL }))).rejects.toThrow(
+    await expect(run(pull, checkedDocument({ url: URL }))).rejects.toThrow(
       "None of the signed-in accounts could read https://docs.google.com/document/d/1testDocumentIdForMiradorGoogleDocs/edit: home@example.com can't open it (403). work@example.com's Google sign-in has ended or needs confirming (ERROR: (gcloud.auth.print-access-token) Reauthentication failed. cannot prompt during non-interactive execution.). Sign it in again with Sign in a Google account.",
     );
     expect(google.tokens.join()).not.toContain("work@example.com");
@@ -77,7 +77,7 @@ describe("push", () => {
 
   test("only the user may send, and only what they approved", async () => {
     const document = await approvedChanges();
-    expect(run(push, document, agent)).rejects.toThrow("Only the user sends changes to Google Docs, with Send in the view.");
+    await expect(run(push, document, agent)).rejects.toThrow("Only the user sends changes to Google Docs, with Send in the view.");
     expect(google.batches).toEqual([]);
     const { summary, document: after } = await run(push, document, you);
     expect(summary).toBe("Sent c2, c1; the edits are suggestions in the doc now.");
