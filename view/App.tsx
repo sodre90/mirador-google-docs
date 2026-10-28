@@ -10,6 +10,20 @@ const mirador = () => window.mirador;
 /** A phone or a tablet: the doc reads first and types after Edit, and its boxes sit at the bottom, clear of the keyboard and the selection handles. */
 const touchScreen = matchMedia("(pointer: coarse)").matches;
 
+/** Whether the view is as narrow as Mirador's canvas panel often is beside the chat, or a phone. */
+function useNarrow() {
+  const [narrow, setNarrow] = useState(() => matchMedia(NARROW).matches);
+  useEffect(() => {
+    const query = matchMedia(NARROW);
+    const follow = () => setNarrow(query.matches);
+    query.addEventListener("change", follow);
+    return () => query.removeEventListener("change", follow);
+  }, []);
+  return narrow;
+}
+
+const NARROW = "(max-width: 900px)";
+
 /** How much of the page the on-screen keyboard covers: Chrome and iOS keep the page's height and shrink only what shows of it. */
 function useKeyboardHeight() {
   useEffect(() => {
@@ -353,10 +367,18 @@ function SelectionBox({ selected, onDone }: { selected: Selected; onDone(): void
   );
 }
 
+/** The change `by` steps from the open one, round the list; from none, the first or the last. */
+function steppedTo(changes: Change[], open: string | null, by: number) {
+  const at = changes.findIndex(({ id }) => id === open);
+  return changes[at === -1 ? (by > 0 ? 0 : changes.length - 1) : (at + by + changes.length) % changes.length]!.id;
+}
+
+const typingInAField = (target: EventTarget | null) => target instanceof HTMLElement && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName));
+
 /** Steps through the pending changes one at a time, opening each and showing its text, as a review does. */
 function Stepper({ changes, open, onOpen }: { changes: Change[]; open: string | null; onOpen(id: string): void }) {
   const at = changes.findIndex(({ id }) => id === open);
-  const step = (by: number) => onOpen(changes[at === -1 ? (by > 0 ? 0 : changes.length - 1) : (at + by + changes.length) % changes.length]!.id);
+  const step = (by: number) => onOpen(steppedTo(changes, open, by));
   return (
     <div className="stepper row">
       <button aria-label="Previous change" onClick={() => step(-1)}>
@@ -402,9 +424,11 @@ interface SidebarProps {
   open: string | null;
   onFocus(id: string | null): void;
   onOpen(id: string | null): void;
+  /** On a phone, or in a narrow panel, the list folds to one bar and opens as a sheet. */
+  compact: boolean;
 }
 
-function Sidebar({ document, focused, open, onFocus, onOpen }: SidebarProps) {
+function Sidebar({ document, focused, open, onFocus, onOpen, compact }: SidebarProps) {
   const { snapshot, changes } = document;
   const approved = changes.filter((change) => change.approved).length;
   const [chosenAuthor, setAuthor] = useState<AuthorFilter>("all");
@@ -417,15 +441,16 @@ function Sidebar({ document, focused, open, onFocus, onOpen }: SidebarProps) {
   const undecided = snapshot.suggestions.filter((suggestion) => !pendingDecisionOn(changes, suggestion.id));
   const [chosen, setChosen] = useState<SidebarTab | null>(null);
   const [showResolved, setShowResolved] = useState(false);
-  /** On a touch screen the list folds away to its tabs, leaving the doc the room; the Send bar stays. */
-  const [folded, setFolded] = useState(touchScreen);
+  /** Folded, the list leaves the doc the room: its counts and Send stay. */
+  const [folded, setFolded] = useState(compact);
+  useEffect(() => setFolded(compact), [compact]);
   const stepping = useRef(false);
   const stepTo = (id: string) => {
     stepping.current = id !== open;
     onOpen(id);
   };
   const choose = (id: SidebarTab) => {
-    setFolded(touchScreen && tab === id && !folded);
+    setFolded(compact && tab === id && !folded);
     setChosen(id);
   };
   /** The changes the user has had To send open for; the agent's others are new to them. */
@@ -451,10 +476,24 @@ function Sidebar({ document, focused, open, onFocus, onOpen }: SidebarProps) {
     { id: "suggestions", title: "Suggestions", count: undecided.length },
   ];
   const threadCard = (thread: Thread) => <ThreadCard key={thread.id} thread={thread} decision={pendingDecisionOn(changes, thread.id)} {...card(thread.id)} />;
+  useEffect(() => {
+    const review = (event: KeyboardEvent) => {
+      if (event.metaKey || event.ctrlKey || event.altKey || typingInAField(event.target) || !shown.length) return;
+      const opened = changes.find(({ id }) => id === open);
+      const key = event.key.toLowerCase();
+      if (key === "j" || key === "k") stepTo(steppedTo(shown, open, key === "j" ? 1 : -1));
+      else if (key === "a" && opened && !opened.approved) mirador().apply({ op: "approve", change: opened.id });
+      else if (key === "d" && opened) mirador().apply({ op: "drop", change: opened.id });
+      else return;
+      event.preventDefault();
+    };
+    window.addEventListener("keydown", review);
+    return () => window.removeEventListener("keydown", review);
+  });
   const tabList = (
     <div className="tabs" role="tablist">
       {tabs.map(({ id, title, count }) => (
-        <button key={id} role="tab" aria-selected={tab === id} aria-expanded={touchScreen ? !folded : undefined} onClick={() => choose(id)}>
+        <button key={id} role="tab" aria-selected={tab === id} aria-expanded={compact ? !folded : undefined} onClick={() => choose(id)}>
           {title} <span className="count">{count}</span>
           {id === "changes" && tab !== "changes" && newFromTheAgent > 0 && <span className="new">{newFromTheAgent} new</span>}
         </button>
@@ -463,7 +502,7 @@ function Sidebar({ document, focused, open, onFocus, onOpen }: SidebarProps) {
   );
   const sendButton = (
     <button className="primary" disabled={approved === 0} onClick={() => mirador().run("push")}>
-      Send{touchScreen ? "" : " to Google Docs"}{approved ? ` (${approved})` : ""}
+      Send{compact ? "" : " to Google Docs"}{approved ? ` (${approved})` : ""}
     </button>
   );
   if (folded)
@@ -475,7 +514,7 @@ function Sidebar({ document, focused, open, onFocus, onOpen }: SidebarProps) {
     );
   return (
     <aside className="sidebar">
-      {touchScreen && <button className="handle" aria-label="Fold the list" onClick={() => setFolded(true)} />}
+      {compact && <button className="handle" aria-label="Fold the list" onClick={() => setFolded(true)} />}
       {tabList}
       <div className="panel" role="tabpanel" aria-label={tabs.find(({ id }) => id === tab)!.title}>
         {tab === "changes" &&
@@ -516,10 +555,7 @@ function Sidebar({ document, focused, open, onFocus, onOpen }: SidebarProps) {
       {changes.length > 0 && (
         <div className="send-bar">
           {shown.length > 0 && <Stepper changes={shown} open={open} onOpen={stepTo} />}
-          <label className="switch">
-            <input type="checkbox" checked={document.directEdits} onChange={(event) => mirador().apply({ op: "direct-edits", on: event.target.checked })} />
-            My edits go in directly, not as suggestions
-          </label>
+          {!touchScreen && <p className="quiet keys">J and K step through the changes, A approves, D drops</p>}
           <div className="row">
           {waitingShown.length > 0 && <button onClick={approveShown}>{author === "all" ? "Approve all" : `Approve all ${author === "agent" ? "the agent's" : "yours"}`}</button>}
           {sendButton}
@@ -563,7 +599,7 @@ function DraftLine({ draft, docArea }: { draft: Draft; docArea: RefObject<HTMLDi
   );
 }
 
-/** The header's actions on a touch screen, which leaves the doc the room: the pencil, not the header, turns on typing. */
+/** The header's actions, which are seldom needed: the doc and the review get the room. */
 function MoreMenu({ children }: { children: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   const menu = useRef<HTMLDivElement>(null);
@@ -581,7 +617,7 @@ function MoreMenu({ children }: { children: React.ReactNode }) {
         ⋮
       </button>
       {open && (
-        <div className="menu" role="menu" onClick={() => setOpen(false)}>
+        <div className="menu" role="menu" onClick={(event) => (event.target as Element).closest("button") && setOpen(false)}>
           {children}
         </div>
       )}
@@ -622,6 +658,7 @@ export function App({ state }: { state: AppDocumentState<GoogleDoc> }) {
   const openChange = document.changes.find(({ id }) => id === open);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [typingOn, setTypingOn] = useState(!touchScreen);
+  const compact = useNarrow();
   useKeyboardHeight();
   const switchTyping = () => {
     if (typingOn) (window.document.activeElement as HTMLElement | null)?.blur();
@@ -704,16 +741,18 @@ export function App({ state }: { state: AppDocumentState<GoogleDoc> }) {
       <header>
         <div className="title">
           <h2>{document.snapshot?.title ?? "Google Docs"}</h2>
-          {document.snapshot && <span className="quiet">{touchScreen ? `read ${readAt}` : `${document.snapshot.account} · read ${readAt}`}</span>}
+          {document.snapshot && <span className="quiet">read {readAt}</span>}
         </div>
-        {touchScreen ? (
-          <MoreMenu>
-            {document.snapshot && <p className="quiet">Read as {document.snapshot.account}</p>}
-            {actions}
-          </MoreMenu>
-        ) : (
-          <div className="row">{actions}</div>
-        )}
+        <MoreMenu>
+          {document.snapshot && <p className="quiet">Read as {document.snapshot.account}</p>}
+          {actions}
+          {document.snapshot && (
+            <label className="switch">
+              <input type="checkbox" checked={document.directEdits} onChange={(event) => mirador().apply({ op: "direct-edits", on: event.target.checked })} />
+              My edits go in directly, not as suggestions
+            </label>
+          )}
+        </MoreMenu>
       </header>
       {touchScreen && document.snapshot && (
         <button className="pencil" aria-label={typingOn ? "Done" : "Edit"} aria-pressed={typingOn} onClick={switchTyping}>
@@ -735,7 +774,7 @@ export function App({ state }: { state: AppDocumentState<GoogleDoc> }) {
           <div className="doc" ref={docArea}>
             <Doc snapshot={document.snapshot} changes={document.changes} editable={typingOn} focused={focused ?? open} onFocus={setFocused} onOpen={setOpen} onWrite={write} onTyping={typing} />
           </div>
-          <Sidebar document={{ ...document, snapshot: document.snapshot }} focused={focused} open={open} onFocus={setFocused} onOpen={openShowingText} />
+          <Sidebar document={{ ...document, snapshot: document.snapshot }} focused={focused} open={open} onFocus={setFocused} onOpen={openShowingText} compact={compact} />
         </div>
       )}
       {draft && <DraftLine draft={draft} docArea={docArea} />}

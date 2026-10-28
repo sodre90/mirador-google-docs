@@ -153,6 +153,9 @@ async function caretAfter(page: Page, block: string, text: string) {
     }, text);
 }
 
+test.describe("in a wide canvas panel", () => {
+  test.use({ viewport: { width: 2400, height: 1000 } });
+
 test("the agent proposes edits to a Google doc shown in Mirador; you select text to ask for more and comment, approve each, and send them as suggestions", async ({ page }) => {
   const conversation = await startWithTheAgent(page);
 
@@ -387,9 +390,12 @@ test("the agent proposes edits to a Google doc shown in Mirador; you select text
   });
 
   await test.step("with direct edits on, Send puts your edit straight into the doc, then the agent's as a suggestion", async () => {
-    const direct = view(page).getByLabel("My edits go in directly, not as suggestions");
+    await view(page).getByRole("button", { name: "More" }).click();
+    const direct = view(page).getByRole("menu").getByLabel("My edits go in directly, not as suggestions");
     await direct.click();
     await expect(direct).toBeChecked();
+    await view(page).getByRole("button", { name: "More" }).click();
+    await expect(view(page).getByRole("menu")).toBeHidden();
     await expect(view(page).locator('.change[data-change="c10"] .badge.direct')).toHaveText("Goes in directly");
     await expect(view(page).locator('.change[data-change="c13"] .badge.direct')).toHaveCount(0);
     await view(page).getByRole("button", { name: "Send to Google Docs (2)" }).click();
@@ -452,9 +458,32 @@ test("the agent proposes edits to a Google doc shown in Mirador; you select text
 
   await test.step("you sign in another Google account from the view", async () => {
     writeFileSync(join(gcloud.folder, "next-sign-in"), "ana@work.example.com\n");
-    await view(page).getByRole("button", { name: "Sign in a Google account" }).click();
+    await view(page).getByRole("button", { name: "More" }).click();
+    await view(page).getByRole("menu").getByRole("button", { name: "Sign in a Google account" }).click();
     await expect(view(page).locator(".task.done")).toHaveText("Signed in: ana@example.com, ana@work.example.com.");
   });
+
+  await test.step("keys review the changes: K opens the last, A approves it, D drops it, and none of them act while you type", async () => {
+    const proposed = await tool(conversation, "apply", { op: { op: "replace", block: "p5", quote: "Budget", with: "Costs" } });
+    const id = proposed.match(/Proposed (c\d+)/)![1]!;
+    const card = view(page).locator(`.change[data-change="${id}"]`);
+    await expect(view(page).locator(".keys")).toHaveText("J and K step through the changes, A approves, D drops");
+    await caretAfter(page, "p4", "review");
+    await page.keyboard.press("k");
+    await expect(view(page).locator(".draft")).toContainText("Will send");
+    await expect(view(page).locator(".stepper")).not.toContainText(`${id} ·`);
+    await page.keyboard.press("Backspace");
+    await view(page).locator("h2").click();
+    await expect(view(page).locator(".draft")).toHaveCount(0);
+    await page.keyboard.press("k");
+    await expect(view(page).locator(".stepper")).toContainText(`${id} ·`);
+    await expect(card).toHaveClass(/open/);
+    await page.keyboard.press("a");
+    await expect(card.locator(".badge")).toHaveText("Approved");
+    await page.keyboard.press("d");
+    await expect(card).toHaveCount(0);
+  });
+});
 });
 
 test.describe("on a touch screen", () => {
@@ -536,5 +565,22 @@ test.describe("on a touch screen", () => {
       await view(page).getByRole("tab", { name: /^To send/ }).tap();
       await expect(view(page).locator(".change").last()).toContainText("insert “ Then\nparty” after “Q3.” in p4");
     });
+  });
+});
+
+test.describe("in a narrow canvas panel", () => {
+  test("the list is one slim bar of counts and Send, which opens as a sheet and folds again", async ({ page }) => {
+    const conversation = await startWithTheAgent(page);
+    await tool(conversation, "app_open", { app: "google-docs", file: "narrow.gdoc" });
+    await tool(conversation, "apply", { op: { op: "link", url: URL } });
+    await tool(conversation, "app_run", { task: "pull" });
+    await tool(conversation, "apply", { op: { op: "replace", block: "p6", quote: "Notes", with: "Open notes" } });
+    await expect(view(page).getByRole("tabpanel")).toBeHidden();
+    await expect(view(page).getByRole("button", { name: "Send", exact: true })).toBeVisible();
+    await view(page).getByRole("tab", { name: /^Comments/ }).click();
+    await expect(view(page).getByRole("tabpanel", { name: "Comments" })).toContainText("Which launch?");
+    await view(page).getByRole("button", { name: "Fold the list" }).click();
+    await expect(view(page).getByRole("tabpanel")).toBeHidden();
+    await expect(view(page).getByRole("button", { name: "Edit" })).toHaveCount(0);
   });
 });

@@ -198,6 +198,7 @@ ul {
 }
 .tabs button {
   flex: 1;
+  white-space: nowrap;
   border: none;
   border-bottom: 2px solid transparent;
   border-radius: 0;
@@ -344,11 +345,14 @@ button.link {
   .page {
     padding: 24px;
   }
+  .body {
+    padding-bottom: 72px;
+  }
   .sidebar {
-    top: auto;
-    bottom: 0;
+    position: fixed;
+    inset: auto 0 var(--keyboard, 0px) 0;
+    z-index: 8;
     max-height: 45vh;
-    margin: 0 -16px -16px;
     padding: 0 16px 12px;
     background: light-dark(#f1f3f4, #18191b);
     border-top: 1px solid light-dark(#dadce0, #3c4043);
@@ -452,7 +456,87 @@ button.chip {
   color: light-dark(#0b57d0, #8ab4f8);
 }
 
+.sidebar > .handle {
+  align-self: center;
+  width: 48px;
+  min-height: 20px;
+  padding: 8px 0;
+  border: none;
+  background: none;
+}
+.sidebar > .handle::before {
+  content: "";
+  display: block;
+  height: 4px;
+  border-radius: 2px;
+  background: light-dark(#c4c7c5, #5f6368);
+}
+.sidebar.folded {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  padding-top: 8px;
+}
+.sidebar.folded .tabs {
+  flex: 1;
+  gap: 4px;
+  border-bottom: none;
+}
+.sidebar.folded .tabs button,
+.sidebar.folded .tabs button[aria-selected="true"] {
+  flex: 0 1 auto;
+  min-height: 32px;
+  padding: 2px 8px;
+  border: 1px solid light-dark(#dadce0, #3c4043);
+  border-radius: 16px;
+  background: light-dark(#fff, #26282b);
+  color: inherit;
+  font-size: 12px;
+  font-weight: 400;
+  white-space: nowrap;
+}
+.sidebar.folded > .primary {
+  min-height: 36px;
+}
+.more {
+  position: relative;
+}
+.more > button {
+  border: none;
+  background: none;
+  font-size: 20px;
+  min-width: 40px;
+  min-height: 40px;
+}
+.more .menu {
+  position: absolute;
+  right: 0;
+  top: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 220px;
+  padding: 10px;
+  background: light-dark(#fff, #26282b);
+  border: 1px solid light-dark(#c4c7c5, #4a4d51);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px light-dark(#0003, #000a);
+  z-index: 13;
+}
+.more .menu p {
+  margin: 0;
+  font-size: 12px;
+}
+.more .menu button {
+  min-height: 40px;
+  text-align: start;
+}
 @media (pointer: coarse) {
+  .card-head,
+  .tabs button,
+  .stepper button {
+    min-height: 40px;
+  }
   .selection-box,
   .selection-box.compact,
   .draft {
@@ -468,48 +552,6 @@ button.chip {
   .app:has(.writable:focus) .sidebar {
     display: none;
   }
-  .sidebar > .handle {
-    align-self: center;
-    width: 48px;
-    min-height: 20px;
-    padding: 8px 0;
-    border: none;
-    background: none;
-  }
-  .sidebar > .handle::before {
-    content: "";
-    display: block;
-    height: 4px;
-    border-radius: 2px;
-    background: light-dark(#c4c7c5, #5f6368);
-  }
-  .sidebar.folded {
-    flex-direction: row;
-    align-items: center;
-    gap: 8px;
-    padding-top: 8px;
-  }
-  .sidebar.folded .tabs {
-    flex: 1;
-    gap: 4px;
-    border-bottom: none;
-  }
-  .sidebar.folded .tabs button,
-  .sidebar.folded .tabs button[aria-selected="true"] {
-    flex: 0 1 auto;
-    min-height: 32px;
-    padding: 2px 8px;
-    border: 1px solid light-dark(#dadce0, #3c4043);
-    border-radius: 16px;
-    background: light-dark(#fff, #26282b);
-    color: inherit;
-    font-size: 12px;
-    font-weight: 400;
-    white-space: nowrap;
-  }
-  .sidebar.folded > .primary {
-    min-height: 36px;
-  }
   .pencil {
     position: fixed;
     right: 16px;
@@ -524,47 +566,9 @@ button.chip {
     box-shadow: 0 2px 8px light-dark(#0004, #000a);
     z-index: 12;
   }
-  .app:has(.sidebar:not(.folded)) .pencil,
+  .app:has(.sidebar:not(.folded) > .handle) .pencil,
   .app:has(.selection-box) .pencil {
     display: none;
-  }
-  .more {
-    position: relative;
-  }
-  .more > button {
-    border: none;
-    background: none;
-    font-size: 20px;
-    min-width: 40px;
-    min-height: 40px;
-  }
-  .more .menu {
-    position: absolute;
-    right: 0;
-    top: 100%;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    min-width: 220px;
-    padding: 10px;
-    background: light-dark(#fff, #26282b);
-    border: 1px solid light-dark(#c4c7c5, #4a4d51);
-    border-radius: 8px;
-    box-shadow: 0 4px 16px light-dark(#0003, #000a);
-    z-index: 13;
-  }
-  .more .menu p {
-    margin: 0;
-    font-size: 12px;
-  }
-  .more .menu button {
-    min-height: 40px;
-    text-align: start;
-  }
-  .card-head,
-  .tabs button,
-  .stepper button {
-    min-height: 40px;
   }
 }
 @media (max-width: 600px) {
@@ -580,16 +584,12 @@ button.chip {
     padding: 0 0 64px;
     gap: 0;
   }
-  .sidebar {
-    position: fixed;
-    inset: auto 0 var(--keyboard, 0px) 0;
-    z-index: 8;
-  }
   .page {
     padding: 16px;
     box-shadow: none;
   }
-  .sidebar {
-    margin: 0;
-  }
+}
+.keys {
+  margin: 0;
+  font-size: 11px;
 }
