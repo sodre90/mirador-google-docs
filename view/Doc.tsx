@@ -95,6 +95,11 @@ function typedText(paragraph: HTMLElement): string {
   return textOf(paragraph).replaceAll(CARET_HOLDER, "");
 }
 
+/** Formatting such as ⌘B would only look made in the page: the box's buttons make it a change instead. */
+function refuseFormatting(event: InputEvent) {
+  if (event.inputType.startsWith("format")) event.preventDefault();
+}
+
 /** Enter as the input it asks for rather than as a key: a phone's keyboard may send no key for it. */
 function breakLineOnEnter(event: InputEvent) {
   if (event.inputType !== "insertParagraph" && event.inputType !== "insertLineBreak") return;
@@ -232,7 +237,11 @@ export function Doc({ snapshot, changes, editable, focused, onFocus, onOpen, onW
   useEffect(() => {
     const article = page.current!;
     article.addEventListener("beforeinput", breakLineOnEnter);
-    return () => article.removeEventListener("beforeinput", breakLineOnEnter);
+    article.addEventListener("beforeinput", refuseFormatting);
+    return () => {
+      article.removeEventListener("beforeinput", breakLineOnEnter);
+      article.removeEventListener("beforeinput", refuseFormatting);
+    };
   }, []);
   const [editing, setEditing] = useState<string | null>(null);
   /** Bumped when the user is done with a paragraph, so React draws it afresh rather than on top of what they typed. */

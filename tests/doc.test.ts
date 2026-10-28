@@ -4,7 +4,7 @@ import { anchorIn, locate } from "../shared/anchor.ts";
 import { snapshotOf, type GoogleDocument } from "../shared/convert.ts";
 import { describeDocument } from "../shared/describe.ts";
 import { checkedDocument, newDocument, OBJECT_MARK, type GoogleDoc, type Paragraph, type Snapshot } from "../shared/document.ts";
-import { applyOperation, changeSummary } from "../shared/operations.ts";
+import { applyOperation, boxOperations, changeSummary } from "../shared/operations.ts";
 import { planPush } from "../shared/push.ts";
 import { differenceOf, editedText, toWholeWords, unwritable } from "../shared/write.ts";
 import fixture from "./fixtures/launch-plan.json";
@@ -256,6 +256,37 @@ describe("styles", () => {
     expect(() => applyOperation(tabbed, { op: "paragraph", block: "p6", list: "bulleted" }, agent)).toThrow("p6 starts with a tab");
   });
 
+  test("you restyle what your own pending change restyles: one change takes both, and goes when the text is back as it was", () => {
+    let document = applied(linked(), [{ op: "format", block: "p4", quote: "review", bold: true }, you]);
+    const step = (operation: unknown) => {
+      const result = applyOperation(document, operation, you);
+      document = result.document;
+      return result;
+    };
+    expect(step({ op: "format", block: "p4", quote: "review", italic: true }).summary).toBe("Changed c1: make “review” in p4 bold, italic.");
+    const unbolded = step({ op: "format", block: "p4", quote: "review", bold: false });
+    expect(unbolded.summary).toBe("Changed c1: make “review” in p4 italic.");
+    expect(applyOperation(document, unbolded.inverse, you).document.changes.map(changeSummary)).toEqual(["make “review” in p4 bold, italic"]);
+    expect(step({ op: "format", block: "p4", quote: "review", italic: false }).summary).toBe("Took back c1.");
+    expect(document.changes).toEqual([]);
+    expect(step({ op: "paragraph", block: "p4", style: "HEADING_2" }).summary).toBe("Added c2: make p4 Heading 2.");
+    expect(step({ op: "paragraph", block: "p4", list: "numbered" }).summary).toBe("Changed c2: make p4 Heading 2, a numbered list item.");
+    expect(step({ op: "paragraph", block: "p4", style: "NORMAL_TEXT", list: "none" }).summary).toBe("Took back c2.");
+    const agents = applied(linked(), [{ op: "format", block: "p4", quote: "review", bold: true }, agent]);
+    expect(() => applyOperation(agents, { op: "format", block: "p4", quote: "review", italic: true }, you)).toThrow("c1 already changes this text");
+  });
+
+  test("a box button skips what is that way already, and makes all of its changes or, when one is refused, none", () => {
+    const launch = { block: "p2", at: 4, quote: "launch" };
+    const review = { block: "p4", at: 18, quote: "review" };
+    expect(boxOperations(linked(), [launch, review], { toggle: "bold" })).toEqual({ operations: [{ op: "format", block: "p4", quote: "review", at: 18, bold: true }] });
+    expect(boxOperations(linked(), [launch], { toggle: "bold" })).toEqual({ operations: [{ op: "format", block: "p2", quote: "launch", at: 4, bold: false }] });
+    expect(boxOperations(linked(), [launch, review], { paragraph: { style: "NORMAL_TEXT" } })).toEqual({ operations: [] });
+    const theAgents = applied(linked(), [{ op: "replace", block: "p4", quote: "review", with: "check" }, agent]);
+    expect(boxOperations(theAgents, [launch, review], { toggle: "italic" })).toEqual({ problem: "c1 already changes this text (replace “review” in p4 with “check”): drop it first, or make one change that covers both." });
+    expect(boxOperations(theAgents, [review], { link: "https://example.com" })).toMatchObject({ problem: expect.stringContaining("c1 already changes this text") });
+  });
+
   test("Send puts the styles in the suggestion batch before the text edits, and paragraphs next to each other in one list", () => {
     const document = applied(
       linked(),
@@ -269,7 +300,7 @@ describe("styles", () => {
     const plan = planPush(document, snapshot());
     expect(plan.problems).toEqual({});
     expect(plan.suggestionRequests).toEqual([
-      { updateTextStyle: { range: { startIndex: 90, endIndex: 96, tabId: "t.0" }, textStyle: { italic: true }, fields: "italic,link" } },
+      { updateTextStyle: { range: { startIndex: 90, endIndex: 96, tabId: "t.0" }, textStyle: { italic: true }, fields: "italic" } },
       { updateParagraphStyle: { range: { startIndex: 72, endIndex: 73, tabId: "t.0" }, paragraphStyle: { namedStyleType: "HEADING_2" }, fields: "namedStyleType" } },
       { deleteParagraphBullets: { range: { startIndex: 45, endIndex: 46, tabId: "t.0" } } },
       { createParagraphBullets: { range: { startIndex: 72, endIndex: 105, tabId: "t.0" }, bulletPreset: "NUMBERED_DECIMAL_ALPHA_ROMAN" } },

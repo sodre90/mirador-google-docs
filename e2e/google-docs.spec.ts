@@ -562,6 +562,53 @@ test("the agent proposes edits to a Google doc shown in Mirador; you select text
         writeControl: { writeMode: "SUGGEST", targetRevisionId: "rev-1" },
       },
     ]);
+
+    await test.step("you make a selection bold, italic, a link or a heading from the box; pressing Bold again takes it back", async () => {
+      const box = view(page).getByRole("dialog", { name: "Selected text" });
+      await select(page, "p2", "planned");
+      await expect(box.getByRole("button", { name: "Bold" })).toHaveAttribute("aria-pressed", "false");
+      await box.getByRole("button", { name: "Bold" }).click();
+      const change = view(page).locator(".change").filter({ hasText: "“planned”" });
+      await expect(change).toContainText("make “planned” in p2 bold");
+      await expect(change.locator(".badge")).toHaveText("Approved");
+      await expect(view(page).locator('[data-block="p2"] .mark-formatted.mine')).toHaveClass(/bold/);
+      await select(page, "p2", "planned");
+      await box.getByRole("button", { name: "Italic" }).click();
+      await expect(change).toContainText("make “planned” in p2 bold, italic");
+      await select(page, "p2", "planned");
+      await expect(box.getByRole("button", { name: "Bold" })).toHaveAttribute("aria-pressed", "true");
+      await box.getByRole("button", { name: "Bold" }).click();
+      await expect(change).toContainText("make “planned” in p2 italic");
+      await select(page, "p2", "planned");
+      await box.getByRole("button", { name: "Link…" }).click();
+      await box.getByLabel("Link to").fill("https://example.com/plan");
+      await box.getByLabel("Link to").press("Enter");
+      await expect(change).toContainText("make “planned” in p2 italic, a link to https://example.com/plan");
+      await select(page, "p6", "Notes");
+      await box.getByLabel("Paragraph style").selectOption("Heading 3");
+      await expect(view(page).locator('[data-block="p6"]')).toHaveJSProperty("tagName", "H3");
+      await expect(view(page).locator(".change").filter({ hasText: "p6" })).toContainText("make p6 Heading 3");
+    });
+
+    await test.step("a box button the doc can't take says why and changes nothing; ⌘B in a paragraph does nothing", async () => {
+      await tool(conversation, "apply", { op: { op: "replace", block: "p4", quote: "review", with: "check" } });
+      const cards = view(page).locator(".change");
+      const count = await cards.count();
+      await select(page, "p4", "review");
+      await view(page).getByRole("dialog", { name: "Selected text" }).getByRole("button", { name: "Bold" }).click();
+      await expect(view(page).getByText("already changes this text (replace “review” in p4 with “check”)")).toBeVisible();
+      await expect(cards).toHaveCount(count);
+      await view(page)
+        .locator('[data-block="p6"]')
+        .evaluate((paragraph) => {
+          const bold = new InputEvent("beforeinput", { inputType: "formatBold", bubbles: true, cancelable: true });
+          if (paragraph.dispatchEvent(bold)) throw new Error("⌘B went through to the page");
+        });
+      await select(page, "p6", "Notes");
+      await view(page).locator('[data-block="p6"]').focus();
+      await page.keyboard.press("ControlOrMeta+b");
+      await expect(view(page).locator('[data-block="p6"] b, [data-block="p6"] strong')).toHaveCount(0);
+    });
   });
 });
 

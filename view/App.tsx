@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import type { AppDocumentState } from "../mirador/api.ts";
-import type { Change, GoogleDoc, GoogleSuggestion, Post, Snapshot, Thread } from "../shared/document.ts";
-import { changeSummary, changesText, pendingDecisionOn } from "../shared/operations.ts";
+import { findParagraph, type Change, type GoogleDoc, type GoogleSuggestion, type List, type ParagraphStyle, type Post, type Snapshot, type TextStyle, type Thread } from "../shared/document.ts";
+import { boxOperations, changeSummary, changesText, formatOf, pendingDecisionOn, shownStyled, type BoxRequest } from "../shared/operations.ts";
 import { writtenChange } from "../shared/write.ts";
 import { Doc, selectionIn, type Selected, type SelectedPart } from "./Doc.tsx";
 
@@ -303,8 +303,110 @@ const QUICK_REWRITES = [
   { label: "Shorter", words: "Make this shorter, keeping what matters." },
 ];
 
-function SelectionBox({ selected, onDone }: { selected: Selected; onDone(): void }) {
+const PARAGRAPH_CHOICES: { label: string; op: { style: ParagraphStyle } | { list: List } }[] = [
+  { label: "Normal text", op: { style: "NORMAL_TEXT" } },
+  { label: "Title", op: { style: "TITLE" } },
+  { label: "Subtitle", op: { style: "SUBTITLE" } },
+  { label: "Heading 1", op: { style: "HEADING_1" } },
+  { label: "Heading 2", op: { style: "HEADING_2" } },
+  { label: "Heading 3", op: { style: "HEADING_3" } },
+  { label: "Bulleted list", op: { list: "bulleted" } },
+  { label: "Numbered list", op: { list: "numbered" } },
+  { label: "No list", op: { list: "none" } },
+];
+
+/** Leaves the paragraph the user is typing in, so it is drawn again with the change the box makes. */
+const leaveTyping = () => (window.document.activeElement as HTMLElement | null)?.blur();
+
+/** Makes what a box button asks for, or says why it can't be done; either way the box closes. */
+function applyFromBox(document: GoogleDoc, parts: SelectedPart[], request: BoxRequest, onNotice: (notice: string | null) => void, onDone: () => void) {
+  leaveTyping();
+  const made = boxOperations(document, parts, request);
+  if ("problem" in made) onNotice(made.problem);
+  else {
+    onNotice(null);
+    for (const operation of made.operations) mirador().apply(operation);
+  }
+  onDone();
+}
+
+interface BoxActions {
+  parts: SelectedPart[];
+  document: GoogleDoc;
+  onNotice(notice: string | null): void;
+  onDone(): void;
+}
+
+/** Bold, italic, a link and the paragraph's style for the selected text, as your own changes. */
+function FormatRow({ parts, document, onNotice, onDone, onLinking }: BoxActions & { onLinking(): void }) {
+  const shown = (style: TextStyle) => parts.every((part) => shownStyled(document.snapshot!, document.changes, part, style));
+  const make = (request: BoxRequest) => applyFromBox(document, parts, request, onNotice, onDone);
+  const toggle = (name: "bold" | "italic") => make({ toggle: name });
+  const restyle = (label: string) => make({ paragraph: PARAGRAPH_CHOICES.find((choice) => choice.label === label)!.op });
+  return (
+    <div className="row format">
+      <button className="bold" aria-label="Bold" aria-pressed={shown({ bold: true })} onClick={() => toggle("bold")}>
+        B
+      </button>
+      <button className="italic" aria-label="Italic" aria-pressed={shown({ italic: true })} onClick={() => toggle("italic")}>
+        I
+      </button>
+      <button onClick={onLinking}>Link…</button>
+      <select aria-label="Paragraph style" value="" onChange={(event) => restyle(event.target.value)}>
+        <option value="" disabled>
+          Paragraph…
+        </option>
+        {PARAGRAPH_CHOICES.map(({ label }) => (
+          <option key={label}>{label}</option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
+/** The address the selected text links to, with a pending format of it made, when all of it links to one. */
+function linkOf(snapshot: Snapshot, changes: Change[], parts: SelectedPart[]): string {
+  const links = parts.flatMap((part) => {
+    const pending = formatOf(snapshot, changes, part)?.style.link;
+    if (pending !== undefined) return [pending ?? ""];
+    const found = findParagraph(snapshot, part.block);
+    return (found?.paragraph.runs ?? []).filter((run) => run.start < part.at + part.quote.length && part.at < run.start + run.text.length).map((run) => run.link ?? "");
+  });
+  return new Set(links).size === 1 ? links[0]! : "";
+}
+
+function TextLinkForm({ parts, document, onNotice, onDone }: BoxActions) {
+  const current = linkOf(document.snapshot!, document.changes, parts);
+  const [address, setAddress] = useState(current || "https://");
+  const link = (to: string | null) => applyFromBox(document, parts, { link: to }, onNotice, onDone);
+  const valid = /^(https?:|mailto:)\S+$/.test(address) && address !== "https://";
+  return (
+    <div className="selection-box-link">
+      <input
+        aria-label="Link to"
+        type="url"
+        autoFocus
+        value={address}
+        onChange={(event) => setAddress(event.target.value.trim())}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") onDone();
+          if (event.key === "Enter" && valid) link(address);
+        }}
+      />
+      <div className="row">
+        <button className="primary" disabled={!valid} onClick={() => link(address)}>
+          Link
+        </button>
+        {current && <button onClick={() => link(null)}>Remove link</button>}
+        <button onClick={onDone}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+function SelectionBox({ selected, document, onNotice, onDone }: { selected: Selected } & Omit<BoxActions, "parts">) {
   const [asking, setAsking] = useState(false);
+  const [linking, setLinking] = useState(false);
   const [words, setWords] = useState("");
   const [sent, setSent] = useState(false);
   const { parts } = selected;
@@ -321,9 +423,16 @@ function SelectionBox({ selected, onDone }: { selected: Selected; onDone(): void
     mirador().apply({ op: "comment", block, quote, at, text: words.trim() });
     onDone();
   };
+  if (linking)
+    return (
+      <div className="selection-box" style={box} role="dialog" aria-label="Selected text" onPointerDown={(event) => event.stopPropagation()}>
+        <TextLinkForm parts={parts} document={document} onNotice={onNotice} onDone={onDone} />
+      </div>
+    );
   if (!asking)
     return (
       <div className="selection-box compact" style={box} role="dialog" aria-label="Selected text" onPointerDown={(event) => event.stopPropagation()}>
+        <FormatRow parts={parts} document={document} onNotice={onNotice} onDone={onDone} onLinking={() => setLinking(true)} />
         <div className="row">
           <button onClick={() => setAsking(true)}>Ask the agent…</button>
           <button disabled={!oneParagraph} title={oneParagraph ? undefined : "A comment goes on text in one paragraph."} onClick={() => setAsking(true)}>
@@ -783,6 +892,8 @@ export function App({ state }: { state: AppDocumentState<GoogleDoc> }) {
       {selected && (
         <SelectionBox
           selected={selected}
+          document={document}
+          onNotice={setNotice}
           onDone={() => {
             setSelected(null);
             window.getSelection()?.removeAllRanges();

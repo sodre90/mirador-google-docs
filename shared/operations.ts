@@ -117,7 +117,7 @@ function bodyOf(operation: Operation, snapshot: Snapshot): ChangeBody {
     case "delete":
       return { kind: "delete", anchor: anchor("quote") };
     case "format":
-      return formatBody(operation, anchor("quote"), snapshot);
+      return formatBody(operation, anchor("quote"));
     case "paragraph":
       return paragraphBody(operation, snapshot);
     case "comment": {
@@ -140,7 +140,7 @@ function bodyOf(operation: Operation, snapshot: Snapshot): ChangeBody {
   throw new Error(`Unknown operation ${JSON.stringify(operation.op)}. ${OPERATIONS_HELP}`);
 }
 
-function formatBody(operation: Operation, anchor: Anchor, snapshot: Snapshot): ChangeBody {
+function formatBody(operation: Operation, anchor: Anchor): ChangeBody {
   const style: TextStyle = {};
   for (const name of TEXT_STYLES) {
     const value = operation[name];
@@ -154,9 +154,6 @@ function formatBody(operation: Operation, anchor: Anchor, snapshot: Snapshot): C
     style.link = link;
   }
   if (!Object.keys(style).length) throw new Error(`format needs a style to set: ${[...TEXT_STYLES, "link"].join(", ")}.`);
-  const { paragraph } = findParagraph(snapshot, anchor.block)!;
-  const at = optionalNumber(operation, "at") ?? paragraph.text.indexOf(anchor.quote);
-  if (styledAlready(paragraph, at, at + anchor.quote.length, style)) throw new Error(`“${anchor.quote}” is ${styleSummary(style)} already.`);
   return { kind: "format", anchor, style };
 }
 
@@ -164,6 +161,80 @@ function formatBody(operation: Operation, anchor: Anchor, snapshot: Snapshot): C
 export function styledAlready(paragraph: Paragraph, start: number, end: number, style: TextStyle) {
   const covering = paragraph.runs.filter((run) => run.start < end && start < run.start + run.text.length);
   return covering.every((run) => TEXT_STYLES.every((name) => style[name] === undefined || style[name] === (run[name] === true)) && (style.link === undefined || style.link === (run.link ?? null)));
+}
+
+/** Text of one paragraph, as a selection gives it. */
+export interface Stretch {
+  block: string;
+  at: number;
+  quote: string;
+}
+
+/** The pending format of just this stretch, if any. */
+export function formatOf(snapshot: Snapshot, changes: Change[], { block, at, quote }: Stretch) {
+  return changes.find((change): change is Change & { kind: "format" } => {
+    if (change.kind !== "format") return false;
+    const located = locate(change.anchor, snapshot);
+    return !("problem" in located) && located.paragraph.id === block && located.start === at && located.end === at + quote.length;
+  });
+}
+
+/** Whether a stretch of a paragraph shows the style, with a pending format of just that stretch made. */
+export function shownStyled(snapshot: Snapshot, changes: Change[], stretch: Stretch, style: TextStyle): boolean {
+  const found = findParagraph(snapshot, stretch.block);
+  if (!found) return false;
+  const { at } = stretch;
+  const end = at + stretch.quote.length;
+  const exact = formatOf(snapshot, changes, stretch);
+  return Object.entries(style).every(([name, value]) => {
+    const pending = exact?.style[name as keyof TextStyle];
+    return pending !== undefined ? pending === value : styledAlready(found.paragraph, at, end, { [name]: value });
+  });
+}
+
+/** A paragraph's style and list with its pending change of them made. */
+export function shownParagraph(snapshot: Snapshot, changes: Change[], block: string): { style: string; list: List } | null {
+  const found = findParagraph(snapshot, block);
+  if (!found) return null;
+  const pending = changes.find((change): change is Change & { kind: "paragraph" } => {
+    if (change.kind !== "paragraph") return false;
+    const located = locate(change.anchor, snapshot);
+    return !("problem" in located) && located.paragraph.id === block;
+  });
+  return { style: pending?.style ?? found.paragraph.style, list: pending?.list ?? listOf(found.paragraph) };
+}
+
+/** What a button of the selection box asks for. */
+export type BoxRequest = { toggle: "bold" | "italic" } | { link: string | null } | { paragraph: { style: ParagraphStyle } | { list: List } };
+
+/**
+ * The user's operations a selection box button makes for the selected text, leaving out what already is that way, or
+ * why it can't be done: all of them go in, or none.
+ */
+export function boxOperations(document: GoogleDoc, parts: Stretch[], request: BoxRequest): { operations: Operation[] } | { problem: string } {
+  const snapshot = requireSnapshot(document);
+  const shown = (part: Stretch, style: TextStyle) => shownStyled(snapshot, document.changes, part, style);
+  const formats = (style: TextStyle) => parts.filter((part) => !shown(part, style)).map(({ block, quote, at }) => ({ op: "format", block, quote, at, ...style }));
+  const operations: Operation[] = (() => {
+    if ("toggle" in request) {
+      const name = request.toggle;
+      return formats({ [name]: !parts.every((part) => shown(part, { [name]: true })) });
+    }
+    if ("link" in request) return formats({ link: request.link });
+    const wanted = request.paragraph;
+    return [...new Set(parts.map(({ block }) => block))]
+      .filter((block) => {
+        const now = shownParagraph(snapshot, document.changes, block);
+        return "style" in wanted ? now?.style !== wanted.style : now?.list !== wanted.list;
+      })
+      .map((block) => ({ op: "paragraph", block, ...wanted }));
+  })();
+  try {
+    operations.reduce((current, operation) => applyOperation(current, operation, { kind: "you" }).document, document);
+  } catch (error) {
+    return { problem: (error as Error).message };
+  }
+  return { operations };
 }
 
 export const listOf = (paragraph: Paragraph): List => (!paragraph.bullet ? "none" : paragraph.bullet.numbered ? "numbered" : "bulleted");
@@ -177,12 +248,54 @@ function paragraphBody(operation: Operation, snapshot: Snapshot): ChangeBody {
   const list = operation.list;
   if (style !== undefined && !PARAGRAPH_STYLES.includes(style as ParagraphStyle)) throw new Error(`style must be one of ${PARAGRAPH_STYLES.join(", ")}.`);
   if (list !== undefined && !LISTS.includes(list as List)) throw new Error(`list must be one of ${LISTS.join(", ")}.`);
-  const newStyle = style !== undefined && style !== paragraph.style ? (style as ParagraphStyle) : undefined;
+  if (style === undefined && list === undefined) throw new Error("paragraph needs a style or a list to set.");
   const newList = list !== undefined && list !== listOf(paragraph) ? (list as List) : undefined;
-  if (!newStyle && !newList) throw new Error(style === undefined && list === undefined ? "paragraph needs a style or a list to set." : `${block} is ${paragraphSummary({ style: style as ParagraphStyle, list: list as List })} already.`);
   if (newList && newList !== "none" && !paragraph.bullet && paragraph.text.startsWith("\t")) throw new Error(`${block} starts with a tab, which Google would take out to nest the item, moving the text after it: take the tab out first.`);
   if (newList && newList !== "none" && paragraph.bullet && paragraph.bullet.nesting > 0) throw new Error(`${block} is nested in its list, and changing the kind of a nested item would lose its place: change the list's kind from its top item.`);
-  return { kind: "paragraph", anchor: paragraphAnchor(snapshot, block), ...(newStyle && { style: newStyle }), ...(newList && { list: newList }) };
+  return { kind: "paragraph", anchor: paragraphAnchor(snapshot, block), ...(style !== undefined && { style: style as ParagraphStyle }), ...(list !== undefined && { list: list as List }) };
+}
+
+type StyleChange = Extract<ChangeBody, { kind: "format" | "paragraph" }>;
+
+const isStyleChange = (body: ChangeBody): body is StyleChange => body.kind === "format" || body.kind === "paragraph";
+
+/** A style change without the parts that the doc has already, or null when nothing is left of it. */
+function withoutNoOps(body: StyleChange, snapshot: Snapshot): StyleChange | null {
+  const found = locate(body.anchor, snapshot);
+  if ("problem" in found) return body;
+  const { paragraph, start, end } = found;
+  if (body.kind === "format") {
+    const style = Object.fromEntries(Object.entries(body.style).filter(([name, value]) => !styledAlready(paragraph, start, end, { [name]: value })));
+    return Object.keys(style).length ? { ...body, style } : null;
+  }
+  const { style, list, ...rest } = body;
+  const changed = { ...rest, ...(style !== undefined && style !== paragraph.style && { style }), ...(list !== undefined && list !== listOf(paragraph) && { list }) };
+  return changed.style || changed.list ? changed : null;
+}
+
+const alreadyMessage = (body: StyleChange) => (body.kind === "format" ? `“${body.anchor.quote}” is ${styleSummary(body.style)} already.` : `${body.anchor.block} is ${paragraphSummary(body)} already.`);
+
+/** The user's own pending style change on just what `body` changes: the same stretch of text, or the same paragraph. */
+function ownStyleChangeOn(document: GoogleDoc, body: StyleChange): (Change & StyleChange) | undefined {
+  const snapshot = requireSnapshot(document);
+  const mine = locate(body.anchor, snapshot);
+  if ("problem" in mine) return undefined;
+  return document.changes.find((change): change is Change & StyleChange => {
+    if (change.by !== "you" || change.kind !== body.kind) return false;
+    const theirs = locate(change.anchor, snapshot);
+    if ("problem" in theirs || theirs.paragraph.id !== mine.paragraph.id) return false;
+    return body.kind === "paragraph" || (theirs.start === mine.start && theirs.end === mine.end);
+  });
+}
+
+/** The user restyles what their own pending change restyles: one change takes both, or none when the doc is back as it was. */
+function restyledOwn(document: GoogleDoc, own: Change & StyleChange, body: StyleChange): Applied {
+  const merged: StyleChange =
+    own.kind === "format" && body.kind === "format" ? { ...own, style: { ...own.style, ...body.style } } : ({ ...own, ...body, anchor: own.anchor } as StyleChange);
+  const kept = withoutNoOps(merged, requireSnapshot(document));
+  if (!kept) return { document: { ...document, changes: document.changes.filter(({ id }) => id !== own.id) }, inverse: { op: "restore", changes: [own] }, summary: `Took back ${own.id}.`, touched: [own.id] };
+  const change = { ...own, ...kept } as Change;
+  return { document: replaced(document, [change]), inverse: { op: "put", change: own }, summary: `Changed ${own.id}: ${changeSummary(change)}.`, touched: [own.id] };
 }
 
 const PROPOSALS = new Set(["replace", "insert", "delete", "format", "paragraph", "comment", "reply", "resolve", "accept", "reject"]);
@@ -215,7 +328,12 @@ export function changeClashing(document: GoogleDoc, body: ChangeBody, ignoring: 
 }
 
 function propose(document: GoogleDoc, operation: Operation, author: AppAuthor | undefined): Applied {
-  const body = bodyOf(operation, requireSnapshot(document));
+  const snapshot = requireSnapshot(document);
+  const raw = bodyOf(operation, snapshot);
+  const own = author?.kind === "you" && isStyleChange(raw) ? ownStyleChangeOn(document, raw) : undefined;
+  if (own) return restyledOwn(document, own, raw as StyleChange);
+  const body = isStyleChange(raw) ? withoutNoOps(raw, snapshot) : raw;
+  if (!body) throw new Error(alreadyMessage(raw as StyleChange));
   const target = decisionTarget(body);
   const earlier = target && pendingDecisionOn(document.changes, target);
   if (earlier) throw new Error(`${earlier.id} already does that: ${changeSummary(earlier)}. Drop it first to decide otherwise.`);
@@ -348,6 +466,12 @@ export function applyOperation(document: GoogleDoc, operation: unknown, author?:
     }
     case "restore":
       return restore(document, (given.changes as Change[] | undefined) ?? [], author);
+    case "put": {
+      requireUser(author, "put back their own change");
+      const change = given.change as Change;
+      const current = changeNamed(document, change?.id);
+      return { document: replaced(document, [change]), inverse: { op: "put", change: current }, summary: `Put back ${change.id}: ${changeSummary(change)}.`, touched: [change.id] };
+    }
     case "write":
       requireUser(author, "type into the doc");
       return write(document, string(given, "block"), string(given, "text"));

@@ -184,7 +184,7 @@ ul {
   background: light-dark(#e6f4ea, #1e3a2a);
   text-decoration: none;
 }
-.link {
+.page .link {
   color: light-dark(#0b57d0, #8ab4f8);
   text-decoration: underline;
 }
@@ -409,6 +409,19 @@ button.link {
 .badge.direct {
   background: light-dark(#e8f0fe, #1f3354);
   color: light-dark(#0b57d0, #8ab4f8);
+}
+.selection-box .format button[aria-pressed="true"] {
+  background: light-dark(#e8f0fe, #1f3354);
+  border-color: light-dark(#0b57d0, #8ab4f8);
+}
+.selection-box-link {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.selection-box-link input {
+  font: inherit;
+  padding: 6px 8px;
 }
 .selection-box.compact {
   width: auto;
