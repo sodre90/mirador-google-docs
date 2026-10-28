@@ -10,6 +10,21 @@ const mirador = () => window.mirador;
 /** A phone or a tablet: the doc reads first and types after Edit, and its boxes sit at the bottom, clear of the keyboard and the selection handles. */
 const touchScreen = matchMedia("(pointer: coarse)").matches;
 
+/** How much of the page the on-screen keyboard covers: Chrome and iOS keep the page's height and shrink only what shows of it. */
+function useKeyboardHeight() {
+  useEffect(() => {
+    const viewport = window.visualViewport;
+    if (!touchScreen || !viewport) return;
+    const measure = () => window.document.documentElement.style.setProperty("--keyboard", `${Math.max(0, window.innerHeight - viewport.height - viewport.offsetTop)}px`);
+    viewport.addEventListener("resize", measure);
+    viewport.addEventListener("scroll", measure);
+    return () => {
+      viewport.removeEventListener("resize", measure);
+      viewport.removeEventListener("scroll", measure);
+    };
+  }, []);
+}
+
 function TaskLine({ state }: { state: AppDocumentState<GoogleDoc> }) {
   const { task, problem } = state;
   if (problem) return <p className="problem">The file can't be read: {problem}</p>;
@@ -567,6 +582,7 @@ export function App({ state }: { state: AppDocumentState<GoogleDoc> }) {
   const openChange = document.changes.find(({ id }) => id === open);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [typingOn, setTypingOn] = useState(!touchScreen);
+  useKeyboardHeight();
   const switchTyping = () => {
     if (typingOn) (window.document.activeElement as HTMLElement | null)?.blur();
     setTypingOn(!typingOn);

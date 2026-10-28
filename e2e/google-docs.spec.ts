@@ -493,13 +493,15 @@ test.describe("on a touch screen", () => {
       await expect(view(page).getByRole("tabpanel")).toBeHidden();
     });
 
-    await test.step("after Edit you type; the list steps aside, the note on what will be sent sits at the bottom, and Enter from a phone's keyboard starts a line", async () => {
+    await test.step("after Edit you type; the list steps aside, Done stays at the top, the note on what will be sent sits at the bottom, and Enter from a phone's keyboard starts a line", async () => {
       await view(page).getByRole("button", { name: "Edit" }).tap();
       await expect(p4).toHaveAttribute("contenteditable", "true");
       await caretAfter(page, "p4", "by Q3.");
       await page.keyboard.type(" Then");
       await expect(view(page).locator(".sidebar")).toBeHidden();
       await expect(view(page).locator(".draft")).toHaveCSS("position", "fixed");
+      await expect(view(page).locator(".draft")).toHaveCSS("bottom", "0px");
+      await expect(view(page).locator("header")).toHaveCSS("position", "sticky");
       await p4.evaluate((paragraph) => {
         const enter = new InputEvent("beforeinput", { inputType: "insertParagraph", bubbles: true, cancelable: true });
         if (paragraph.dispatchEvent(enter)) throw new Error("Enter went through to the page");
