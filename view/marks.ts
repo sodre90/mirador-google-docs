@@ -1,17 +1,27 @@
 import { locate, occurrences } from "../shared/anchor.ts";
-import { isAnchored, paragraphs, type Change, type Paragraph, type Snapshot, type TextRun } from "../shared/document.ts";
+import { isAnchored, paragraphs, type Change, type List, type Paragraph, type ParagraphStyle, type Snapshot, type TextRun, type TextStyle } from "../shared/document.ts";
 
 /** Where a pending change or a comment thread shows in a paragraph's text. */
 export interface Mark {
   start: number;
   end: number;
-  kind: "deleted" | "commented" | "thread" | "point";
+  kind: "deleted" | "commented" | "thread" | "point" | "formatted";
   /** A change's id, or a thread's. */
   id: string;
   /** The user's own edit of the text, which the view shows as already made, so they type on in it. */
   mine?: true;
   /** Text the change would add there, shown but not part of the paragraph's text. */
   added?: { text: string; at: number };
+  /** The style a format change gives the text, which the view shows as already given. */
+  style?: TextStyle;
+}
+
+/** A pending change of a paragraph's style or list, which the view shows as already made. */
+export interface Restyle {
+  id: string;
+  mine: boolean;
+  style?: ParagraphStyle;
+  list?: List;
 }
 
 function markOf(change: Change, start: number, end: number): Mark {
@@ -27,6 +37,8 @@ function textMarkOf(change: Change, start: number, end: number): Mark {
       return { start, end, kind: "deleted", id: change.id };
     case "insert":
       return { start, end, kind: "point", id: change.id, added: { text: change.text, at: change.where === "before" ? start : end } };
+    case "format":
+      return { start, end, kind: "formatted", id: change.id, style: change.style };
     default:
       return { start, end, kind: "commented", id: change.id };
   }
@@ -45,7 +57,7 @@ export function marksOf(snapshot: Snapshot, changes: Change[]): Map<string, Mark
     if (marks.some((other) => overlaps(other, mark))) return;
     byParagraph.set(paragraph, [...marks, mark].sort((a, b) => a.start - b.start));
   };
-  for (const change of changes.filter(isAnchored)) {
+  for (const change of changes.filter(isAnchored).filter(({ kind }) => kind !== "paragraph")) {
     const found = locate(change.anchor, snapshot);
     if (!("problem" in found)) add(found.paragraph.id, markOf(change, found.start, found.end));
   }
@@ -56,6 +68,31 @@ export function marksOf(snapshot: Snapshot, changes: Change[]): Map<string, Mark
     if (places.length === 1 && only) add(only.paragraph.id, { start: only.start, end: only.start + thread.quote.length, kind: "thread", id: thread.id });
   }
   return byParagraph;
+}
+
+/** The pending change of each paragraph's style or list, by the paragraph's id. */
+export function restylesOf(snapshot: Snapshot, changes: Change[]): Map<string, Restyle> {
+  const restyles = new Map<string, Restyle>();
+  for (const change of changes) {
+    if (change.kind !== "paragraph") continue;
+    const found = locate(change.anchor, snapshot);
+    if (!("problem" in found) && !restyles.has(found.paragraph.id)) restyles.set(found.paragraph.id, { id: change.id, mine: change.by === "you", ...(change.style && { style: change.style }), ...(change.list && { list: change.list }) });
+  }
+  return restyles;
+}
+
+/** A run's style with a format change's style made: what the view shows for the text. */
+export function styledRun(run: TextRun, style: TextStyle | undefined): TextRun {
+  if (!style) return run;
+  const { link, ...flags } = style;
+  const styled: TextRun = { ...run };
+  for (const [name, on] of Object.entries(flags) as [keyof typeof flags, boolean][]) {
+    if (on) styled[name] = true;
+    else delete styled[name];
+  }
+  if (link === null) delete styled.link;
+  else if (link !== undefined) styled.link = link;
+  return styled;
 }
 
 /** A piece of a paragraph as the view draws it: its own text with one style and at most one mark, or a change's added text. */

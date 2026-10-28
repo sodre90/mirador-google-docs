@@ -6,7 +6,7 @@ import { describeDocument } from "../shared/describe.ts";
 import { checkedDocument, newDocument, OBJECT_MARK, type GoogleDoc, type Paragraph, type Snapshot } from "../shared/document.ts";
 import { applyOperation, changeSummary } from "../shared/operations.ts";
 import { planPush } from "../shared/push.ts";
-import { differenceOf, editedText, toWholeWords } from "../shared/write.ts";
+import { differenceOf, editedText, toWholeWords, unwritable } from "../shared/write.ts";
 import fixture from "./fixtures/launch-plan.json";
 
 const URL = "https://docs.google.com/document/d/1testDocumentIdForMiradorGoogleDocs/edit";
@@ -214,6 +214,99 @@ describe("sending", () => {
   });
 });
 
+describe("styles", () => {
+  test("the agent formats a quote or restyles a paragraph; a change to what's there already, or a bad link, is refused", () => {
+    const document = applied(
+      linked(),
+      [{ op: "format", block: "p4", quote: "Q3 and", bold: true, link: "https://example.com/q3" }, agent],
+      [{ op: "format", block: "p2", quote: "launch", bold: false }, agent],
+      [{ op: "paragraph", block: "p4", style: "HEADING_2", list: "numbered" }, agent],
+      [{ op: "paragraph", block: "p3", list: "none" }, agent],
+    );
+    expect(document.changes.map(changeSummary)).toEqual([
+      "make “Q3 and” in p4 bold, a link to https://example.com/q3",
+      "make “launch” in p2 not bold",
+      "make p4 Heading 2, a numbered list item",
+      "make p3 no list item",
+    ]);
+    expect(document.changes[2]).toMatchObject({ anchor: { block: "p4", quote: "We ship by Q3 and review by Q3.", prefix: "" } });
+    expect(() => applyOperation(linked(), { op: "format", block: "p2", quote: "launch", bold: true }, agent)).toThrow("“launch” is bold already.");
+    expect(() => applyOperation(linked(), { op: "format", block: "p2", quote: "launch", link: "javascript:alert(1)" }, agent)).toThrow("link must be an address");
+    expect(() => applyOperation(linked(), { op: "format", block: "p2", quote: "launch" }, agent)).toThrow("format needs a style to set");
+    expect(() => applyOperation(linked(), { op: "paragraph", block: "p1", style: "HEADING_1" }, agent)).toThrow("p1 is Heading 1 already.");
+    expect(() => applyOperation(linked(), { op: "paragraph", block: "p3", list: "bulleted" }, agent)).toThrow("p3 is a bulleted list item already.");
+    expect(() => applyOperation(linked(), { op: "paragraph", block: "p2", style: "HEADING_9" }, agent)).toThrow("style must be one of NORMAL_TEXT");
+  });
+
+  test("a format clashes with any change on its text; a paragraph's style only with another change of that paragraph", () => {
+    const document = applied(linked(), [{ op: "replace", block: "p4", quote: "Q3 and", with: "Q4 and" }, agent], [{ op: "paragraph", block: "p4", style: "HEADING_2" }, agent]);
+    expect(() => applyOperation(document, { op: "format", block: "p4", quote: "ship by Q3", bold: true }, agent)).toThrow("c1 already changes this text");
+    expect(() => applyOperation(document, { op: "paragraph", block: "p4", list: "bulleted" }, you)).toThrow("c2 already changes this paragraph (make p4 Heading 2): drop it first");
+    expect(applyOperation(document, { op: "insert", block: "p4", before: "We", text: "Now " }, agent).summary).toStartWith("Proposed c3");
+    expect(applyOperation(document, { op: "format", block: "p4", quote: "review", italic: true }, you).summary).toBe("Added c3: make “review” in p4 italic.");
+  });
+
+  test("a nested list item keeps its kind, and a paragraph starting with a tab doesn't become one: either would move text", () => {
+    const nested = linked();
+    (paragraph(nested.snapshot!, "p3").bullet as { nesting: number }).nesting = 1;
+    expect(() => applyOperation(nested, { op: "paragraph", block: "p3", list: "numbered" }, agent)).toThrow("p3 is nested in its list");
+    expect(applyOperation(nested, { op: "paragraph", block: "p3", list: "none" }, agent).summary).toBe("Proposed c1: make p3 no list item.");
+    const tabbed = linked();
+    Object.assign(paragraph(tabbed.snapshot!, "p6"), { text: "\tNotes by Q3" });
+    expect(() => applyOperation(tabbed, { op: "paragraph", block: "p6", list: "bulleted" }, agent)).toThrow("p6 starts with a tab");
+  });
+
+  test("Send puts the styles in the suggestion batch before the text edits, and paragraphs next to each other in one list", () => {
+    const document = applied(
+      linked(),
+      [{ op: "insert", block: "p4", before: "We", text: "Intro\n" }, agent],
+      [{ op: "format", block: "p4", quote: "review", italic: true, link: null }, agent],
+      [{ op: "paragraph", block: "p4", style: "HEADING_2", list: "numbered" }, agent],
+      [{ op: "paragraph", block: "p5", list: "numbered" }, agent],
+      [{ op: "paragraph", block: "p3", list: "none" }, agent],
+      [{ op: "approve-all" }, you],
+    );
+    const plan = planPush(document, snapshot());
+    expect(plan.problems).toEqual({});
+    expect(plan.suggestionRequests).toEqual([
+      { updateTextStyle: { range: { startIndex: 90, endIndex: 96, tabId: "t.0" }, textStyle: { italic: true }, fields: "italic,link" } },
+      { updateParagraphStyle: { range: { startIndex: 72, endIndex: 73, tabId: "t.0" }, paragraphStyle: { namedStyleType: "HEADING_2" }, fields: "namedStyleType" } },
+      { deleteParagraphBullets: { range: { startIndex: 45, endIndex: 46, tabId: "t.0" } } },
+      { createParagraphBullets: { range: { startIndex: 72, endIndex: 105, tabId: "t.0" }, bulletPreset: "NUMBERED_DECIMAL_ALPHA_ROMAN" } },
+      { insertText: { location: { index: 72, tabId: "t.0" }, text: "Intro\n" } },
+    ]);
+  });
+
+  test("a pull reads numbered lists and Google's own style suggestions, which make a card when the doc lists none, and stop typing there", () => {
+    const google = structuredClone(fixture) as unknown as { tabs: { documentTab: { lists?: unknown; body: { content: { paragraph?: { bullet?: unknown; suggestedParagraphStyleChanges?: unknown; elements: { textRun?: { suggestedTextStyleChanges?: unknown } }[] } }[] } } }[] };
+    const content = google.tabs[0]!.documentTab.body.content.filter(({ paragraph }) => paragraph);
+    google.tabs[0]!.documentTab.lists = { "kix.list": { listProperties: { nestingLevels: [{ glyphType: "DECIMAL" }] } } };
+    content[1]!.paragraph!.elements[0]!.textRun!.suggestedTextStyleChanges = { "suggest.bold": { textStyle: { bold: true }, textStyleSuggestionState: { boldSuggested: true } } };
+    const budget = content[4]!.paragraph!.elements.find((element) => (element as { textRun?: { suggestedInsertionIds?: string[] } }).textRun?.suggestedInsertionIds)!;
+    budget.textRun!.suggestedTextStyleChanges = { "suggest.a": {} };
+    content[3]!.paragraph!.suggestedParagraphStyleChanges = { "suggest.heading": {} };
+    const read = snapshot(google as unknown as GoogleDocument);
+    expect(paragraph(read, "p3").bullet).toEqual({ nesting: 0, numbered: true });
+    expect(paragraph(read, "p2").runs[0]!.restyled).toEqual(["suggest.bold"]);
+    expect(paragraph(read, "p4").restyled).toEqual(["suggest.heading"]);
+    expect(paragraph(read, "p5").runs.some((run) => run.restyled)).toBe(false);
+    expect(read.suggestions.map(({ id, summary }) => [id, summary])).toEqual([
+      ["suggest.a", "Replace: “5k” with “10k”"],
+      ["suggest.bold", "A change of style"],
+      ["suggest.heading", "A change of style"],
+    ]);
+    expect(unwritable(paragraph(read, "p4"))).toStartWith("This paragraph has suggestions in the doc");
+    expect(describeDocument({ ...linked(), snapshot: read })).toContain("p3 1. [object] Owner: Ana\nt1");
+    expect(describeDocument({ ...linked(), snapshot: read })).toContain("p4 We ship by Q3 and review by Q3. (style suggestion suggest.heading)");
+  });
+
+  test("typing over text with a pending change of style is refused, whoever made it", () => {
+    const document = applied(linked(), [{ op: "format", block: "p4", quote: "review", italic: true }, you]);
+    expect(() => applyOperation(document, { op: "write", block: "p4", text: "We ship by Q3 and check by Q3." }, you)).toThrow("c1 changes the style of this text: send or drop it first, then type here.");
+    expect(applyOperation(document, { op: "write", block: "p4", text: "We ship by Q4 and review by Q3." }, you).summary).toBe("Wrote c2: replace “Q3” in p4 with “Q4”.");
+  });
+});
+
 describe("suggestions in the doc", () => {
   test("Send skips a second decision on one suggestion, as docs saved before it was refused can hold", () => {
     const accept = { kind: "accept", suggestion: "suggest.a", by: "you", approved: true } as const;
@@ -390,7 +483,7 @@ describe("describing the doc for the agent", () => {
     const document = applied(linked(), [{ op: "delete", block: "p2", quote: " 🚀" }, agent]);
     const text = describeDocument(document);
     expect(text).toContain("“Launch plan”, read 2026-10-25 12:00 UTC as ana@example.com.");
-    expect(text).toContain("p1 [Heading 1] Launch plan\np2 The launch is planned by Q3 🚀.\np3 • [object] Owner: Ana\nt1 [table, read only] Risk | Low");
+    expect(text).toContain("p1 [Heading 1] Launch plan\np2 The launch is planned by Q3 🚀.\n  styles: bold “launch”\np3 • [object] Owner: Ana\nt1 [table, read only] Risk | Low");
     expect(text).toContain("p5 Budget: [+10k+][-5k-]");
     expect(text).toContain("Tab “Notes”:\np6 Notes by Q3");
     expect(text).toContain("- doco.thread1 (open) on “launch”: Ana: “Which launch?”; Ben: “The spring one.”");

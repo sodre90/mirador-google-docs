@@ -1,7 +1,7 @@
-import { OBJECT_MARK, type Block, type GoogleDoc, type Paragraph, type Snapshot } from "./document.ts";
+import { OBJECT_MARK, TEXT_STYLES, type Block, type GoogleDoc, type Paragraph, type Snapshot } from "./document.ts";
 import { changeSummary, OPERATIONS_HELP } from "./operations.ts";
+import { STYLE_NAMES } from "./styles.ts";
 
-const STYLE_NAMES: Record<string, string> = { TITLE: "Title", SUBTITLE: "Subtitle", HEADING_1: "Heading 1", HEADING_2: "Heading 2", HEADING_3: "Heading 3", HEADING_4: "Heading 4", HEADING_5: "Heading 5", HEADING_6: "Heading 6" };
 
 /** A paragraph's text with Google's own suggestions marked: [+inserted+] and [-deleted-]. */
 function markedText(paragraph: Paragraph) {
@@ -10,6 +10,7 @@ function markedText(paragraph: Paragraph) {
       const text = run.object ? "[object]" : run.text;
       if (run.inserted) return `[+${text}+]`;
       if (run.deleted) return `[-${text}-]`;
+      if (run.restyled) return `[~${text}~]`;
       return text;
     })
     .join("");
@@ -18,17 +19,29 @@ function markedText(paragraph: Paragraph) {
 function blockLine(block: Block) {
   if (block.kind === "table") return `${block.id} [table, read only] ${block.rows.map((row) => row.join(" | ")).join(" / ")}`;
   const style = STYLE_NAMES[block.style];
-  const bullet = block.bullet ? `${"  ".repeat(block.bullet.nesting)}• ` : "";
-  if (!block.text) return `${block.id} [empty]`;
-  return `${block.id} ${style ? `[${style}] ` : ""}${bullet}${markedText(block)}`;
+  const bullet = block.bullet ? `${"  ".repeat(block.bullet.nesting)}${block.bullet.numbered ? "1." : "•"} ` : "";
+  const restyled = block.restyled ? ` (style suggestion ${block.restyled.join(", ")})` : "";
+  if (!block.text) return `${block.id} [empty]${restyled}`;
+  return [`${block.id} ${style ? `[${style}] ` : ""}${bullet}${markedText(block)}${restyled}`, stylesLine(block)].filter(Boolean).join("\n");
+}
+
+/** The paragraph's styled text, on a line of its own so quotes of the text stay exact. */
+function stylesLine(paragraph: Paragraph) {
+  const styled = paragraph.runs
+    .filter((run) => !run.object)
+    .flatMap((run) => {
+      const names = [...TEXT_STYLES.filter((name) => run[name]), ...(run.link ? [`link → ${run.link}`] : [])];
+      return names.length && run.text.trim() ? [`${names.join(", ")} “${run.text}”`] : [];
+    });
+  return styled.length ? `  styles: ${styled.join("; ")}` : "";
 }
 
 function snapshotText(snapshot: Snapshot) {
   const read = new Date(snapshot.pulledAt).toISOString().replace("T", " ").slice(0, 16);
-  const hasMarks = snapshot.tabs.some((tab) => tab.blocks.some((block) => block.kind === "paragraph" && block.runs.some((run) => run.inserted || run.deleted)));
+  const hasMarks = snapshot.tabs.some((tab) => tab.blocks.some((block) => block.kind === "paragraph" && block.runs.some((run) => run.inserted || run.deleted || run.restyled)));
   const hasObjects = snapshot.tabs.some((tab) => tab.blocks.some((block) => block.kind === "paragraph" && block.text.includes(OBJECT_MARK)));
   const notes = [
-    hasMarks && "Text in [+…+] and [-…-] is the doc's open suggestions; a quote includes their text but not the brackets.",
+    hasMarks && "Text in [+…+] and [-…-] is the doc's open suggestions, and text in [~…~] has a suggested change of style; a quote includes their text but not the brackets.",
     hasObjects && `[object] is an image or chip; in a quote it is the character ${JSON.stringify(OBJECT_MARK)}.`,
   ].filter(Boolean);
   const tabs = snapshot.tabs.map((tab) => [snapshot.tabs.length > 1 ? `Tab “${tab.title}”:` : null, ...tab.blocks.map(blockLine)].filter(Boolean).join("\n"));

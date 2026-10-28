@@ -68,9 +68,9 @@ const wordAfter = (text: string, at: number) => {
   return Math.min(space === -1 ? text.length : space, at + QUOTE_LENGTH);
 };
 
-/** The agent's pending edit of the text that [start, end) touches, which typing there would clash with when sent. */
-function agentEditOn(snapshot: Snapshot, changes: Change[], block: string, start: number, end: number): TextChange | undefined {
-  return changes.filter((change): change is TextChange => change.by === "agent" && isAnchored(change) && isTextChange(change)).find((change) => {
+/** The pending change that typing over [start, end) would clash with when sent: the agent's edit of that text, or anyone's change of its style. */
+function changeOn(snapshot: Snapshot, changes: Change[], block: string, start: number, end: number): AnchoredChange | undefined {
+  return changes.filter((change): change is AnchoredChange => isAnchored(change) && ((change.by === "agent" && isTextChange(change)) || change.kind === "format")).find((change) => {
     const found = locate(change.anchor, snapshot);
     return !("problem" in found) && found.paragraph.id === block && (start === end ? found.start <= start && start <= found.end : found.start < end && start < found.end);
   });
@@ -78,7 +78,7 @@ function agentEditOn(snapshot: Snapshot, changes: Change[], block: string, start
 
 /** Why typing can't change this paragraph, or null when it can. */
 export function unwritable(paragraph: Paragraph): string | null {
-  if (paragraph.runs.some((run) => run.inserted || run.deleted)) return "This paragraph has suggestions in the doc: accept or reject them first, then type here.";
+  if (paragraph.restyled || paragraph.runs.some((run) => run.inserted || run.deleted || run.restyled)) return "This paragraph has suggestions in the doc: accept or reject them first, then type here.";
   return null;
 }
 
@@ -95,8 +95,9 @@ export function writtenChange(snapshot: Snapshot, changes: Change[], block: stri
   const difference = differenceOf(paragraph.text, text);
   if (!difference) return { body: null, replaces, before };
   const { start, end, text: added } = toWholeWords(paragraph.text, text, difference);
-  const theAgents = agentEditOn(snapshot, changes, block, start, end);
-  if (theAgents) throw new Error(`The agent's change ${theAgents.id} is on this text: approve or drop it first, then type here.`);
+  const pending = changeOn(snapshot, changes, block, start, end);
+  if (pending?.kind === "format") throw new Error(`${pending.id} changes the style of this text: send or drop it first, then type here.`);
+  if (pending) throw new Error(`The agent's change ${pending.id} is on this text: approve or drop it first, then type here.`);
   if (paragraph.text.slice(start, end).includes(OBJECT_MARK) || added.includes(OBJECT_MARK)) throw new Error("Images and chips can't be changed by typing: type around them, or ask the agent.");
   const original = paragraph.text;
   if (!original) return { body: { kind: "insert", anchor: anchorIn(snapshot, block, "", 0), where: "after", text: added }, replaces, before };

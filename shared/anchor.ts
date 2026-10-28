@@ -26,6 +26,15 @@ export function anchorIn(snapshot: Snapshot, block: string, quote: string, at?: 
   return { tab: tab.id, block, quote, prefix: paragraph.text.slice(Math.max(0, start - CONTEXT), start), suffix: paragraph.text.slice(start + quote.length, start + quote.length + CONTEXT) };
 }
 
+const OPENING_WORDS = 30;
+
+/** The anchor of a whole paragraph: its first words, tied to its start, so edits further on in it don't lose it. */
+export function paragraphAnchor(snapshot: Snapshot, block: string): Anchor {
+  const text = findParagraph(snapshot, block)?.paragraph.text ?? "";
+  const space = text.indexOf(" ", Math.min(OPENING_WORDS, text.length));
+  return anchorIn(snapshot, block, text.slice(0, space === -1 ? text.length : space), 0);
+}
+
 /** An empty paragraph has no text to quote: its anchor keeps the end of the paragraph before it and the start of the one after. */
 function emptyParagraphAnchor(tab: Tab, paragraph: Paragraph): Anchor {
   const { before, after } = neighboursOf(tab, paragraph);

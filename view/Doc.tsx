@@ -1,7 +1,8 @@
 import { memo, useEffect, useMemo, useRef, useState, type FocusEvent } from "react";
-import { OBJECT_MARK, type Block, type Change, type Paragraph, type Snapshot } from "../shared/document.ts";
+import { OBJECT_MARK, type Block, type Change, type List, type Paragraph, type Snapshot, type Tab } from "../shared/document.ts";
+import { listOf } from "../shared/operations.ts";
 import { editedText, unwritable } from "../shared/write.ts";
-import { marksOf, piecesOf, type Mark, type Piece } from "./marks.ts";
+import { marksOf, piecesOf, restylesOf, styledRun, type Mark, type Piece, type Restyle } from "./marks.ts";
 
 const TAGS: Record<string, "h1" | "h2" | "h3" | "h4" | "h5" | "h6"> = { TITLE: "h1", HEADING_1: "h1", HEADING_2: "h2", HEADING_3: "h3", HEADING_4: "h4", HEADING_5: "h5", HEADING_6: "h6" };
 
@@ -23,11 +24,27 @@ interface Props {
 type Shared = Pick<Props, "focused" | "onFocus" | "onOpen">;
 
 function TextPiece({ piece, focused, onFocus, onOpen }: { piece: Extract<Piece, { kind: "text" }> } & Shared) {
-  const { run, mark } = piece;
+  const { mark } = piece;
   if (mark?.mine && mark.kind === "deleted") return null;
-  const suggestions = run.inserted ?? run.deleted;
+  const run = styledRun(piece.run, mark?.style);
+  const suggestions = run.inserted ?? run.deleted ?? run.restyled;
   const opened = mark?.id ?? suggestions?.[0];
-  const classes = [run.bold && "bold", run.italic && "italic", run.underline && "underline", run.strikethrough && "strike", run.inserted && "their-insertion", run.deleted && "their-deletion", run.object && "object", mark && `mark-${mark.kind}`, (mark?.id === focused || (focused !== null && suggestions?.includes(focused))) && "focused"].filter(Boolean).join(" ");
+  const classes = [
+    run.bold && "bold",
+    run.italic && "italic",
+    run.underline && "underline",
+    run.strikethrough && "strike",
+    run.link && "link",
+    run.inserted && "their-insertion",
+    run.deleted && "their-deletion",
+    run.restyled && "their-restyle",
+    run.object && "object",
+    mark && `mark-${mark.kind}`,
+    mark?.kind === "formatted" && mark.mine && "mine",
+    (mark?.id === focused || (focused !== null && suggestions?.includes(focused))) && "focused",
+  ]
+    .filter(Boolean)
+    .join(" ");
   const text = run.object ? "▣".repeat(piece.text.length) : piece.text;
   return (
     <span
@@ -97,6 +114,10 @@ interface ParagraphProps extends Shared {
   marks: Mark[];
   /** The paragraph's text with the user's own edits made, as they type on from. */
   written: string;
+  /** A pending change of its style or list, shown as made. */
+  restyle?: Restyle;
+  /** Its number in a numbered list, as the doc shows it with the pending changes made. */
+  number?: number;
   editing: boolean;
   /** The user left it with a write the doc hasn't shown yet, so it keeps what they typed until it does. */
   settling: boolean;
@@ -109,12 +130,27 @@ interface ParagraphProps extends Shared {
 
 /** While the user types in a paragraph, and until the doc shows what they wrote, React leaves it alone: the text they typed is in the page, not in its pieces. */
 const ParagraphView = memo(
-  function ParagraphView({ paragraph, marks, written, editable, focused, onFocus, onOpen, onEditing, onLeave, onWrite, onTyping }: ParagraphProps) {
-    const Tag = TAGS[paragraph.style] ?? "p";
+  function ParagraphView({ paragraph, marks, written, restyle, number, editable, focused, onFocus, onOpen, onEditing, onLeave, onWrite, onTyping }: ParagraphProps) {
+    const style = restyle?.style ?? paragraph.style;
+    const list = restyle?.list ?? listOf(paragraph);
+    const Tag = TAGS[style] ?? "p";
     const pieces = piecesOf(paragraph, marks);
     const problem = editable ? unwritable(paragraph) : null;
     const writable = editable && !problem;
-    const className = [paragraph.style === "SUBTITLE" && "subtitle", paragraph.bullet && "bullet", writable && "writable"].filter(Boolean).join(" ") || undefined;
+    const opened = restyle?.id ?? paragraph.restyled?.[0];
+    const className =
+      [
+        style === "SUBTITLE" && "subtitle",
+        list !== "none" && "bullet",
+        list === "numbered" && "numbered",
+        restyle && "restyled",
+        restyle?.mine && "mine",
+        paragraph.restyled && "their-paragraph-restyle",
+        (focused !== null && (restyle?.id === focused || paragraph.restyled?.includes(focused))) && "focused",
+        writable && "writable",
+      ]
+        .filter(Boolean)
+        .join(" ") || undefined;
     const leave = (event: FocusEvent<HTMLElement>) => {
       onTyping(paragraph.id, null);
       const text = typedText(event.currentTarget);
@@ -124,11 +160,15 @@ const ParagraphView = memo(
       <Tag
         className={className}
         data-block={paragraph.id}
-        style={paragraph.bullet && { marginInlineStart: `${1.5 + paragraph.bullet.nesting * 1.5}em` }}
+        data-mark={restyle?.id}
+        data-suggestions={paragraph.restyled?.join(" ")}
+        data-number={number}
+        style={list !== "none" ? { marginInlineStart: `${1.5 + (paragraph.bullet?.nesting ?? 0) * 1.5}em` } : undefined}
         contentEditable={writable}
         suppressContentEditableWarning
         spellCheck={false}
         title={problem ?? undefined}
+        onClick={opened ? (event) => event.target === event.currentTarget && onOpen(opened) : undefined}
         onFocus={() => onEditing(paragraph.id)}
         onBlur={writable ? leave : undefined}
         onInput={writable ? (event) => onTyping(paragraph.id, typedText(event.currentTarget)) : undefined}
@@ -141,7 +181,7 @@ const ParagraphView = memo(
   (before, after) => (before.editing || before.settling) && (after.editing || after.settling),
 );
 
-function BlockView({ block, ...rest }: { block: Block; marks: Map<string, Mark[]>; written: (paragraph: Paragraph) => string; editing: string | null; settling: string[]; editable: boolean; onEditing(block: string): void; onLeave: ParagraphProps["onLeave"]; onWrite: Props["onWrite"]; onTyping: Props["onTyping"] } & Shared) {
+function BlockView({ block, ...rest }: { block: Block; marks: Map<string, Mark[]>; written: (paragraph: Paragraph) => string; restyles: Map<string, Restyle>; numbers: Map<string, number>; editing: string | null; settling: string[]; editable: boolean; onEditing(block: string): void; onLeave: ParagraphProps["onLeave"]; onWrite: Props["onWrite"]; onTyping: Props["onTyping"] } & Shared) {
   if (block.kind === "table")
     return (
       <table data-block={block.id}>
@@ -156,16 +196,38 @@ function BlockView({ block, ...rest }: { block: Block; marks: Map<string, Mark[]
         </tbody>
       </table>
     );
-  const { marks, written, editing, settling, ...shared } = rest;
-  return <ParagraphView paragraph={block} marks={marks.get(block.id) ?? []} written={written(block)} editing={editing === block.id} settling={settling.includes(block.id)} {...shared} />;
+  const { marks, written, restyles, numbers, editing, settling, ...shared } = rest;
+  return <ParagraphView paragraph={block} marks={marks.get(block.id) ?? []} written={written(block)} restyle={restyles.get(block.id)} number={numbers.get(block.id)} editing={editing === block.id} settling={settling.includes(block.id)} {...shared} />;
 }
 
 /** What one of the user's own marks changes in the text, as the paragraph shows it. */
 const editOfMark = ({ kind, start, end, added }: Mark) => (kind === "point" ? { start: added!.at, end: added!.at, text: added!.text } : { start, end, text: added?.text ?? "" });
 
+/** The numbers of a tab's numbered paragraphs, counted at each nesting level from where the list starts. */
+function numbersOf(tab: Tab, listAfterChanges: (paragraph: Paragraph) => List, numbers: Map<string, number>) {
+  let counts: number[] = [];
+  for (const block of tab.blocks) {
+    const list = block.kind === "paragraph" ? listAfterChanges(block) : "none";
+    if (block.kind !== "paragraph" || list === "none") {
+      counts = [];
+      continue;
+    }
+    const nesting = block.bullet?.nesting ?? 0;
+    counts = counts.slice(0, nesting + 1);
+    counts[nesting] = list === "numbered" ? (counts[nesting] ?? 0) + 1 : 0;
+    if (list === "numbered") numbers.set(block.id, counts[nesting]!);
+  }
+  return numbers;
+}
+
 /** The doc as Google shows it, with the pending changes and the open threads marked in its text; the user types into its paragraphs. */
 export function Doc({ snapshot, changes, editable, focused, onFocus, onOpen, onWrite, onTyping }: Props) {
   const marks = useMemo(() => marksOf(snapshot, changes), [snapshot, changes]);
+  const restyles = useMemo(() => restylesOf(snapshot, changes), [snapshot, changes]);
+  const numbers = useMemo(() => {
+    const listAfterChanges = (paragraph: Paragraph) => restyles.get(paragraph.id)?.list ?? listOf(paragraph);
+    return snapshot.tabs.reduce((numbers, tab) => numbersOf(tab, listAfterChanges, numbers), new Map<string, number>());
+  }, [snapshot, restyles]);
   const page = useRef<HTMLElement>(null);
   useEffect(() => {
     const article = page.current!;
@@ -183,7 +245,7 @@ export function Doc({ snapshot, changes, editable, focused, onFocus, onOpen, onW
     redraw(settled);
     setSettling((blocks) => blocks.filter((block) => !settled.includes(block)));
   }, [snapshot, changes]);
-  const written = (paragraph: Paragraph) => editedText(paragraph.text, (marks.get(paragraph.id) ?? []).filter(({ mine }) => mine).map(editOfMark));
+  const written = (paragraph: Paragraph) => editedText(paragraph.text, (marks.get(paragraph.id) ?? []).filter(({ mine, kind }) => mine && kind !== "formatted").map(editOfMark));
   const leave = (block: string, wrote: boolean) => {
     setEditing(null);
     if (wrote) setSettling((blocks) => [...blocks, block]);
@@ -195,7 +257,7 @@ export function Doc({ snapshot, changes, editable, focused, onFocus, onOpen, onW
         <section key={tab.id} data-tab={tab.id}>
           {snapshot.tabs.length > 1 && <div className="tab-title">{tab.title}</div>}
           {tab.blocks.map((block) => (
-            <BlockView key={`${block.id}:${drawn[block.id] ?? 0}`} block={block} marks={marks} written={written} editing={editing} settling={settling} editable={editable} onEditing={setEditing} onLeave={leave} onWrite={onWrite} onTyping={onTyping} focused={focused} onFocus={onFocus} onOpen={onOpen} />
+            <BlockView key={`${block.id}:${drawn[block.id] ?? 0}`} block={block} marks={marks} written={written} restyles={restyles} numbers={numbers} editing={editing} settling={settling} editable={editable} onEditing={setEditing} onLeave={leave} onWrite={onWrite} onTyping={onTyping} focused={focused} onFocus={onFocus} onOpen={onOpen} />
           ))}
         </section>
       ))}

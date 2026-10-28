@@ -1,6 +1,7 @@
 import type { AppAuthor } from "../mirador/api.ts";
-import { anchorIn, locate, spanOf, spansOverlap } from "./anchor.ts";
-import { checkedDocument, documentIdOf, isAnchored, type Anchor, type Change, type ChangeBody, type GoogleDoc, type Snapshot } from "./document.ts";
+import { anchorIn, locate, paragraphAnchor, spanOf, spansOverlap } from "./anchor.ts";
+import { checkedDocument, documentIdOf, findParagraph, isAnchored, LISTS, PARAGRAPH_STYLES, TEXT_STYLES, type Anchor, type Change, type ChangeBody, type GoogleDoc, type List, type Paragraph, type ParagraphStyle, type Snapshot, type TextStyle } from "./document.ts";
+import { STYLE_NAMES } from "./styles.ts";
 import { writtenChange } from "./write.ts";
 
 export interface Applied {
@@ -17,6 +18,8 @@ export const OPERATIONS_HELP = [
   '- { "op": "replace", "block": "p12", "quote": "by Q3", "with": "by the end of October" }',
   '- { "op": "insert", "block": "p12", "after": "planned", "text": " carefully" } (or "before" instead of "after"; "\\n" in text starts a new paragraph; "after": "" writes into an empty paragraph)',
   '- { "op": "delete", "block": "p12", "quote": " carefully" }',
+  '- { "op": "format", "block": "p12", "quote": "launch", "bold": true, "link": "https://example.com" }: any of bold, italic, underline, strikethrough (true or false), and link (an address, or null to take the link off)',
+  `- { "op": "paragraph", "block": "p12", "style": "HEADING_2", "list": "numbered" }: either or both; style is one of ${PARAGRAPH_STYLES.join(", ")}, list one of ${LISTS.join(", ")}`,
   '- { "op": "comment", "block": "p12", "quote": "launch", "text": "Which launch?" }',
   '- { "op": "reply", "thread": "<thread id>", "text": "Done.", "resolve": true }',
   '- { "op": "resolve", "thread": "<thread id>" }',
@@ -51,6 +54,16 @@ export const countOf = (count: number, one: string) => `${count} ${count === 1 ?
 
 const quoted = (text: string) => `“${text.length > 60 ? `${text.slice(0, 60)}…` : text}”`;
 
+export const styleSummary = (style: TextStyle) =>
+  [
+    ...TEXT_STYLES.filter((name) => style[name] !== undefined).map((name) => (style[name] ? name : `not ${name}`)),
+    ...(style.link === undefined ? [] : [style.link === null ? "no link" : `a link to ${style.link}`]),
+  ].join(", ");
+
+const LIST_NAMES: Record<List, string> = { bulleted: "a bulleted list item", numbered: "a numbered list item", none: "no list item" };
+
+export const paragraphSummary = ({ style, list }: { style?: ParagraphStyle; list?: List }) => [style && (STYLE_NAMES[style] ?? "Normal text"), list && LIST_NAMES[list]].filter(Boolean).join(", ");
+
 export function changeSummary(change: ChangeBody): string {
   switch (change.kind) {
     case "replace":
@@ -60,6 +73,10 @@ export function changeSummary(change: ChangeBody): string {
       return `insert ${quoted(change.text)} ${change.where} ${quoted(change.anchor.quote)} in ${change.anchor.block}`;
     case "delete":
       return `delete ${quoted(change.anchor.quote)} in ${change.anchor.block}`;
+    case "format":
+      return `make ${quoted(change.anchor.quote)} in ${change.anchor.block} ${styleSummary(change.style)}`;
+    case "paragraph":
+      return `make ${change.anchor.block} ${paragraphSummary(change)}`;
     case "comment":
       return `comment on ${quoted(change.anchor.quote)} in ${change.anchor.block}: ${quoted(change.text)}`;
     case "reply":
@@ -99,6 +116,10 @@ function bodyOf(operation: Operation, snapshot: Snapshot): ChangeBody {
     }
     case "delete":
       return { kind: "delete", anchor: anchor("quote") };
+    case "format":
+      return formatBody(operation, anchor("quote"), snapshot);
+    case "paragraph":
+      return paragraphBody(operation, snapshot);
     case "comment": {
       const text = string(operation, "text");
       if (!text.trim()) throw new Error("A comment needs some text.");
@@ -119,7 +140,52 @@ function bodyOf(operation: Operation, snapshot: Snapshot): ChangeBody {
   throw new Error(`Unknown operation ${JSON.stringify(operation.op)}. ${OPERATIONS_HELP}`);
 }
 
-const PROPOSALS = new Set(["replace", "insert", "delete", "comment", "reply", "resolve", "accept", "reject"]);
+function formatBody(operation: Operation, anchor: Anchor, snapshot: Snapshot): ChangeBody {
+  const style: TextStyle = {};
+  for (const name of TEXT_STYLES) {
+    const value = operation[name];
+    if (value === undefined) continue;
+    if (typeof value !== "boolean") throw new Error(`${name} must be true or false.`);
+    style[name] = value;
+  }
+  if (operation.link !== undefined) {
+    const link = operation.link;
+    if (link !== null && (typeof link !== "string" || !/^(https?:|mailto:)\S+$/.test(link))) throw new Error("link must be an address such as https://example.com, or null to take the link off.");
+    style.link = link;
+  }
+  if (!Object.keys(style).length) throw new Error(`format needs a style to set: ${[...TEXT_STYLES, "link"].join(", ")}.`);
+  const { paragraph } = findParagraph(snapshot, anchor.block)!;
+  const at = optionalNumber(operation, "at") ?? paragraph.text.indexOf(anchor.quote);
+  if (styledAlready(paragraph, at, at + anchor.quote.length, style)) throw new Error(`“${anchor.quote}” is ${styleSummary(style)} already.`);
+  return { kind: "format", anchor, style };
+}
+
+/** Whether all of [start, end) of a paragraph already has the style. */
+export function styledAlready(paragraph: Paragraph, start: number, end: number, style: TextStyle) {
+  const covering = paragraph.runs.filter((run) => run.start < end && start < run.start + run.text.length);
+  return covering.every((run) => TEXT_STYLES.every((name) => style[name] === undefined || style[name] === (run[name] === true)) && (style.link === undefined || style.link === (run.link ?? null)));
+}
+
+export const listOf = (paragraph: Paragraph): List => (!paragraph.bullet ? "none" : paragraph.bullet.numbered ? "numbered" : "bulleted");
+
+function paragraphBody(operation: Operation, snapshot: Snapshot): ChangeBody {
+  const block = string(operation, "block");
+  const found = findParagraph(snapshot, block);
+  if (!found) throw new Error(`There's no paragraph ${block} in the doc; app_state lists them.`);
+  const { paragraph } = found;
+  const style = operation.style;
+  const list = operation.list;
+  if (style !== undefined && !PARAGRAPH_STYLES.includes(style as ParagraphStyle)) throw new Error(`style must be one of ${PARAGRAPH_STYLES.join(", ")}.`);
+  if (list !== undefined && !LISTS.includes(list as List)) throw new Error(`list must be one of ${LISTS.join(", ")}.`);
+  const newStyle = style !== undefined && style !== paragraph.style ? (style as ParagraphStyle) : undefined;
+  const newList = list !== undefined && list !== listOf(paragraph) ? (list as List) : undefined;
+  if (!newStyle && !newList) throw new Error(style === undefined && list === undefined ? "paragraph needs a style or a list to set." : `${block} is ${paragraphSummary({ style: style as ParagraphStyle, list: list as List })} already.`);
+  if (newList && newList !== "none" && !paragraph.bullet && paragraph.text.startsWith("\t")) throw new Error(`${block} starts with a tab, which Google would take out to nest the item, moving the text after it: take the tab out first.`);
+  if (newList && newList !== "none" && paragraph.bullet && paragraph.bullet.nesting > 0) throw new Error(`${block} is nested in its list, and changing the kind of a nested item would lose its place: change the list's kind from its top item.`);
+  return { kind: "paragraph", anchor: paragraphAnchor(snapshot, block), ...(newStyle && { style: newStyle }), ...(newList && { list: newList }) };
+}
+
+const PROPOSALS = new Set(["replace", "insert", "delete", "format", "paragraph", "comment", "reply", "resolve", "accept", "reject"]);
 
 /** The pending change that already accepts, rejects or resolves what `body` would, if any: one is enough. */
 export const pendingDecisionOn = (changes: Change[], target: string) =>
@@ -127,11 +193,12 @@ export const pendingDecisionOn = (changes: Change[], target: string) =>
 
 const decisionTarget = (body: ChangeBody) => (body.kind === "accept" || body.kind === "reject" ? body.suggestion : body.kind === "resolve" || (body.kind === "reply" && body.resolve) ? body.thread : null);
 
-const isTextEdit = (change: ChangeBody) => change.kind === "replace" || change.kind === "insert" || change.kind === "delete";
+/** A change that Send makes to a stretch of text, which another such change on the same text would land in. */
+export const changesText = (change: ChangeBody) => change.kind === "replace" || change.kind === "insert" || change.kind === "delete" || change.kind === "format";
 
-/** The pending text edit that `body` would touch the same text as, which Send could put in only one of. */
-export function textEditClashing(document: GoogleDoc, body: ChangeBody): Change | undefined {
-  if (!isTextEdit(body) || !isAnchored(body as Change)) return undefined;
+/** The pending change that `body` would clash with when sent: one on the same text, or one on the same paragraph's style. */
+export function changeClashing(document: GoogleDoc, body: ChangeBody, ignoring: string[] = []): Change | undefined {
+  if (!changesText(body) && body.kind !== "paragraph") return undefined;
   const snapshot = requireSnapshot(document);
   const placed = (change: ChangeBody) => {
     const located = locate((change as Change & { anchor: Anchor }).anchor, snapshot);
@@ -140,9 +207,10 @@ export function textEditClashing(document: GoogleDoc, body: ChangeBody): Change 
   const mine = placed(body);
   if (!mine) return undefined;
   return document.changes.find((change) => {
-    if (!isTextEdit(change)) return false;
+    if (ignoring.includes(change.id) || (change.kind === "paragraph") !== (body.kind === "paragraph") || !(changesText(change) || change.kind === "paragraph")) return false;
     const theirs = placed(change);
-    return theirs !== null && spansOverlap(mine, theirs);
+    if (!theirs) return false;
+    return body.kind === "paragraph" ? theirs.located.paragraph.id === mine.located.paragraph.id : spansOverlap(mine, theirs);
   });
 }
 
@@ -151,8 +219,8 @@ function propose(document: GoogleDoc, operation: Operation, author: AppAuthor | 
   const target = decisionTarget(body);
   const earlier = target && pendingDecisionOn(document.changes, target);
   if (earlier) throw new Error(`${earlier.id} already does that: ${changeSummary(earlier)}. Drop it first to decide otherwise.`);
-  const clash = textEditClashing(document, body);
-  if (clash) throw new Error(`${clash.id} already changes this text (${changeSummary(clash)}): drop it first, or make one change that covers both.`);
+  const clash = changeClashing(document, body);
+  if (clash) throw new Error(`${clash.id} already changes ${clash.kind === "paragraph" ? "this paragraph" : "this text"} (${changeSummary(clash)}): drop it first, or make one change that covers both.`);
   const yours = author?.kind === "you";
   const change: Change = { ...body, id: `c${document.nextChange}`, by: yours ? "you" : "agent", approved: yours };
   return {

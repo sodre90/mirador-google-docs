@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import type { AppDocumentState } from "../mirador/api.ts";
 import type { Change, GoogleDoc, GoogleSuggestion, Post, Snapshot, Thread } from "../shared/document.ts";
-import { changeSummary, pendingDecisionOn } from "../shared/operations.ts";
+import { changeSummary, changesText, pendingDecisionOn } from "../shared/operations.ts";
 import { writtenChange } from "../shared/write.ts";
 import { Doc, selectionIn, type Selected, type SelectedPart } from "./Doc.tsx";
 
@@ -90,7 +90,7 @@ function CardHead({ id, card, children }: { id: string; card: CardProps; childre
   );
 }
 
-const goesInDirectly = (document: GoogleDoc, change: Change) => document.directEdits && change.by === "you" && (change.kind === "replace" || change.kind === "insert" || change.kind === "delete");
+const goesInDirectly = (document: GoogleDoc, change: Change) => document.directEdits && change.by === "you" && (changesText(change) || change.kind === "paragraph");
 
 function ApprovalButtons({ change }: { change: Change }) {
   return (

@@ -1,15 +1,18 @@
 import { locate, spanOf, spansOverlap, type Located } from "./anchor.ts";
-import { isAnchored, type AnchoredChange, type Change, type GoogleDoc, type Snapshot } from "./document.ts";
+import { isAnchored, TEXT_STYLES, type AnchoredChange, type Change, type GoogleDoc, type Snapshot } from "./document.ts";
 import { threadIn } from "./operations.ts";
 
 export interface PushPlan {
   /** Comments and replies, sent first in a plain batch: they don't move any text. */
   commentRequests: unknown[];
   commentChanges: string[];
-  /** Text edits, sent in one batch as suggestions, from the end of each tab back so no edit moves the next one's place. */
+  /**
+   * Edits, sent in one batch as suggestions: the style changes first, which move no text, then the text edits from the
+   * end of each tab back so no edit moves the next one's place.
+   */
   suggestionRequests: unknown[];
   suggestionChanges: string[];
-  /** The user's own text edits when they go straight into the doc: sent before the suggestions, which are placed again after them. */
+  /** The user's own edits when they go straight into the doc: sent before the suggestions, which are placed again after them. */
   directRequests: unknown[];
   directChanges: string[];
   /** Accepting and rejecting suggestions, sent last: accepting one changes the text the edits were placed in. */
@@ -27,11 +30,18 @@ interface Placed {
   to: number;
 }
 
-
 function editRequests({ change, located }: Placed): unknown[] {
   const tabId = located.tab.id;
   const range = { startIndex: located.startIndex, endIndex: located.endIndex, tabId };
   switch (change.kind) {
+    case "format": {
+      const { link, ...flags } = change.style;
+      const textStyle = { ...flags, ...(link && { link: { url: link } }) };
+      const fields = [...TEXT_STYLES.filter((name) => flags[name] !== undefined), ...(link === undefined ? [] : ["link"])];
+      return [{ updateTextStyle: { range, textStyle, fields: fields.join(",") } }];
+    }
+    case "paragraph":
+      return change.style ? [{ updateParagraphStyle: { range: paragraphRange(located, located), paragraphStyle: { namedStyleType: change.style }, fields: "namedStyleType" } }] : [];
     case "replace":
       return [{ deleteContentRange: { range } }, { insertText: { location: { index: located.startIndex, tabId }, text: change.text } }];
     case "delete":
@@ -39,6 +49,41 @@ function editRequests({ change, located }: Placed): unknown[] {
     case "insert":
       return [{ insertText: { location: { index: change.where === "before" ? located.startIndex : located.endIndex, tabId }, text: change.text } }];
   }
+}
+
+/** From the start of one paragraph to the start of another's text, which Google's paragraph requests take as both and those between. */
+const paragraphRange = (first: Located, last: Located) => ({ startIndex: first.paragraph.startIndex, endIndex: last.paragraph.startIndex + 1, tabId: first.tab.id });
+
+const BULLET_PRESETS = { bulleted: "BULLET_DISC_CIRCLE_SQUARE", numbered: "NUMBERED_DECIMAL_ALPHA_ROMAN" };
+
+/** Bullets for the paragraphs whose list changes, one request for each run of paragraphs next to each other that become the same kind of list, so they make one list. */
+function listRequests(placed: Placed[]): unknown[] {
+  const listed = placed
+    .filter((each): each is Placed & { change: { kind: "paragraph"; list: string } } => each.change.kind === "paragraph" && each.change.list !== undefined)
+    .toSorted((a, b) => a.located.tab.id.localeCompare(b.located.tab.id) || a.located.paragraph.startIndex - b.located.paragraph.startIndex);
+  const runs: Placed[][] = [];
+  for (const each of listed) {
+    const run = runs.at(-1);
+    const last = run?.at(-1);
+    const blocks = each.located.tab.blocks;
+    const follows = last && last.located.tab.id === each.located.tab.id && last.change.kind === "paragraph" && last.change.list === each.change.list && blocks.indexOf(last.located.paragraph) + 1 === blocks.indexOf(each.located.paragraph);
+    if (run && follows) run.push(each);
+    else runs.push([each]);
+  }
+  return runs.map((run) => {
+    const range = paragraphRange(run[0]!.located, run.at(-1)!.located);
+    const list = (run[0]!.change as { list: "bulleted" | "numbered" | "none" }).list;
+    return list === "none" ? { deleteParagraphBullets: { range } } : { createParagraphBullets: { range, bulletPreset: BULLET_PRESETS[list] } };
+  });
+}
+
+const movesText = ({ change }: Placed) => change.kind === "replace" || change.kind === "insert" || change.kind === "delete";
+
+/** The requests for placed changes: styles first, as they move no text, then the text edits from the end back. */
+function requestsFor(placed: Placed[]): unknown[] {
+  const styles = placed.filter((each) => !movesText(each));
+  const edits = placed.filter(movesText).toSorted((a, b) => b.from - a.from || b.to - a.to);
+  return [...styles.flatMap(editRequests), ...listRequests(styles), ...edits.flatMap(editRequests)];
 }
 
 function decisionRequest(change: Extract<Change, { kind: "accept" | "reject" }>, fresh: Snapshot): unknown | string {
@@ -91,17 +136,17 @@ export function planPush(document: GoogleDoc, fresh: Snapshot): PushPlan {
       continue;
     }
     const candidate = { change, located, ...spanOf(change, located) };
-    const clash = placed.find((other) => spansOverlap(other, candidate));
+    const isParagraph = (each: Placed) => each.change.kind === "paragraph";
+    const clash = placed.find((other) => isParagraph(other) === isParagraph(candidate) && (isParagraph(candidate) ? other.located.paragraph.id === located.paragraph.id : spansOverlap(other, candidate)));
     if (clash) plan.problems[change.id] = `It touches the same text as ${clash.change.id}, which goes in with this Send: drop this one, or drop ${clash.change.id} and send this one.`;
     else placed.push(candidate);
   }
-  const lastFirst = placed.toSorted((a, b) => b.from - a.from || b.to - a.to);
   const isDirect = ({ change }: Placed) => document.directEdits && change.by === "you";
-  const direct = lastFirst.filter(isDirect);
-  const suggested = direct.length ? [] : lastFirst;
-  plan.directRequests = direct.flatMap(editRequests);
+  const direct = placed.filter(isDirect);
+  const suggested = direct.length ? [] : placed;
+  plan.directRequests = requestsFor(direct);
   plan.directChanges = direct.map(({ change }) => change.id);
-  plan.suggestionRequests = suggested.flatMap(editRequests);
+  plan.suggestionRequests = requestsFor(suggested);
   plan.suggestionChanges = suggested.map(({ change }) => change.id);
   return plan;
 }

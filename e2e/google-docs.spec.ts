@@ -22,7 +22,7 @@ let host: InstanceType<TestHostModule["TestHost"]>;
 let gcloud: ReturnType<typeof fakeGcloud>;
 
 /** The Docs API, as far as the plugin uses it: one doc, and every batchUpdate it is sent. */
-const google = { batches: [] as { requests: unknown[]; writeControl?: unknown }[], server: null as Server | null };
+const google = { batches: [] as { requests: unknown[]; writeControl?: unknown }[], server: null as Server | null, document: fixture as unknown };
 
 function startGoogle(): Promise<string> {
   google.server = createServer((request, response) => {
@@ -36,10 +36,23 @@ function startGoogle(): Promise<string> {
       } else if (request.method === "POST") {
         google.batches.push(JSON.parse(body));
         response.end(JSON.stringify({ replies: [], writeControl: { requiredRevisionId: "rev-2" } }));
-      } else response.end(JSON.stringify(fixture));
+      } else response.end(JSON.stringify(google.document));
     });
   });
   return new Promise((resolve) => google.server!.listen(0, "127.0.0.1", () => resolve(`http://127.0.0.1:${(google.server!.address() as AddressInfo).port}`)));
+}
+
+test.afterEach(() => {
+  google.document = fixture;
+});
+
+/** The fixture with collaborators' suggestions of style: “Budget: ” in p5 made italic, and p1 made a Heading 2. */
+function withStyleSuggestions() {
+  const copy = structuredClone(fixture);
+  const [, heading, , , , , budget] = copy.tabs[0]!.documentTab.body.content as { paragraph?: { suggestedParagraphStyleChanges?: unknown; elements: { textRun?: { suggestedTextStyleChanges?: unknown } }[] } }[];
+  heading!.paragraph!.suggestedParagraphStyleChanges = { "suggest.heading": { paragraphStyle: { namedStyleType: "HEADING_2" } } };
+  budget!.paragraph!.elements[0]!.textRun!.suggestedTextStyleChanges = { "suggest.italic": { textStyle: { italic: true }, textStyleSuggestionState: { italicSuggested: true } } };
+  return copy;
 }
 
 const prompts = () => readFileSync(join(host.root, "prompts"), "utf8");
@@ -497,6 +510,59 @@ test("the agent proposes edits to a Google doc shown in Mirador; you select text
     await expect(card).toHaveCount(0);
   });
 });
+
+  test("collaborators' suggestions of style are marked and open their cards; the agent's changes of style show in the doc as made, and go to Google Docs as suggestions of style", async ({ page }) => {
+    const conversation = await startWithTheAgent(page);
+    google.document = withStyleSuggestions();
+    await tool(conversation, "app_open", { app: "google-docs", file: "styles.gdoc" });
+    await tool(conversation, "apply", { op: { op: "link", url: URL } });
+    await tool(conversation, "app_run", { task: "pull" });
+    const described = await tool(conversation, "app_state", {});
+    expect(described).toContain("p1 [Heading 1] Launch plan (style suggestion suggest.heading)");
+    expect(described).toContain("p5 [~Budget: ~][+10k+][-5k-]");
+    expect(described).toContain("p2 The launch is planned by Q3 🚀.\n  styles: bold “launch”");
+
+    await expect(view(page).locator('[data-block="p1"]')).toHaveClass(/their-paragraph-restyle/);
+    await expect(view(page).locator('[data-block="p1"]')).toHaveAttribute("contenteditable", "false");
+    await expect(view(page).locator('[data-block="p5"] .their-restyle')).toHaveText("Budget: ");
+    await view(page).locator('[data-block="p5"] .their-restyle').click();
+    const suggestion = view(page).locator('.suggestion[data-suggestion="suggest.italic"]');
+    await expect(suggestion).toContainText("A change of style");
+    await expect(suggestion.getByRole("button", { name: "Accept" })).toBeVisible();
+    await expect(suggestion.getByRole("button", { name: "Reject" })).toBeVisible();
+    expect(await tool(conversation, "apply", { op: { op: "format", block: "p4", quote: "review", bold: true, link: "https://example.com/review" } })).toContain("Proposed c1: make “review” in p4 bold, a link to https://example.com/review.");
+    expect(await tool(conversation, "apply", { op: { op: "paragraph", block: "p4", style: "HEADING_2" } })).toContain("Proposed c2: make p4 Heading 2.");
+    expect(await tool(conversation, "apply", { op: { op: "paragraph", block: "p5", list: "numbered" } })).toContain("Proposed c3: make p5 a numbered list item.");
+    expect(await tool(conversation, "apply", { op: { op: "format", block: "p4", quote: "review by", italic: true } })).toContain("c1 already changes this text");
+
+    const p4 = view(page).locator('[data-block="p4"]');
+    await expect(p4).toHaveJSProperty("tagName", "H2");
+    await expect(p4).toHaveClass(/restyled/);
+    await expect(p4.locator(".mark-formatted")).toHaveText("review");
+    await expect(p4.locator(".mark-formatted")).toHaveClass(/bold/);
+    await expect(p4.locator(".mark-formatted")).toHaveAttribute("title", "https://example.com/review");
+    await expect(view(page).locator('[data-block="p5"]')).toHaveClass(/numbered/);
+    await expect(view(page).locator('[data-block="p5"]')).toHaveAttribute("data-number", "1");
+    await tab(page, "To send");
+    await expect(view(page).locator('.change[data-change="c2"]')).toContainText("make p4 Heading 2");
+    await p4.locator(".mark-formatted").click();
+    await expect(view(page).locator('.change[data-change="c1"] .card-head')).toHaveAttribute("aria-expanded", "true");
+
+    google.batches.length = 0;
+    await view(page).getByRole("button", { name: "Approve all" }).click();
+    await view(page).getByRole("button", { name: "Send to Google Docs (3)" }).click();
+    await expect(view(page).locator(".task.done")).toHaveText("Sent c1, c2, c3; the edits are suggestions in the doc now.");
+    expect(google.batches).toEqual([
+      {
+        requests: [
+          { updateTextStyle: { range: { startIndex: 90, endIndex: 96, tabId: "t.0" }, textStyle: { bold: true, link: { url: "https://example.com/review" } }, fields: "bold,link" } },
+          { updateParagraphStyle: { range: { startIndex: 72, endIndex: 73, tabId: "t.0" }, paragraphStyle: { namedStyleType: "HEADING_2" }, fields: "namedStyleType" } },
+          { createParagraphBullets: { range: { startIndex: 104, endIndex: 105, tabId: "t.0" }, bulletPreset: "NUMBERED_DECIMAL_ALPHA_ROMAN" } },
+        ],
+        writeControl: { writeMode: "SUGGEST", targetRevisionId: "rev-1" },
+      },
+    ]);
+  });
 });
 
 test.describe("on a touch screen", () => {
