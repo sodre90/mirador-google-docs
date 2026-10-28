@@ -14,8 +14,8 @@ interface Props {
   onFocus(id: string | null): void;
   /** Clicking marked text opens what marks it in the sidebar. */
   onOpen(id: string): void;
-  /** The user left a paragraph they typed in: its text as they wrote it. */
-  onWrite(block: string, text: string): void;
+  /** The user left a paragraph they typed in: its text as they wrote it. Whether it was written. */
+  onWrite(block: string, text: string): boolean;
   /** The text of the paragraph the user is typing in, as it is now, or null once they leave it. */
   onTyping(block: string, text: string | null): void;
 }
@@ -98,25 +98,27 @@ interface ParagraphProps extends Shared {
   /** The paragraph's text with the user's own edits made, as they type on from. */
   written: string;
   editing: boolean;
+  /** The user left it with a write the doc hasn't shown yet, so it keeps what they typed until it does. */
+  settling: boolean;
   editable: boolean;
-  onEditing(block: string | null): void;
-  onWrite(block: string, text: string): void;
+  onEditing(block: string): void;
+  onLeave(block: string, wrote: boolean): void;
+  onWrite: Props["onWrite"];
   onTyping: Props["onTyping"];
 }
 
-/** While the user types in a paragraph, React leaves it alone: the text they typed is in the page, not in its pieces. */
+/** While the user types in a paragraph, and until the doc shows what they wrote, React leaves it alone: the text they typed is in the page, not in its pieces. */
 const ParagraphView = memo(
-  function ParagraphView({ paragraph, marks, written, editable, focused, onFocus, onOpen, onEditing, onWrite, onTyping }: ParagraphProps) {
+  function ParagraphView({ paragraph, marks, written, editable, focused, onFocus, onOpen, onEditing, onLeave, onWrite, onTyping }: ParagraphProps) {
     const Tag = TAGS[paragraph.style] ?? "p";
     const pieces = piecesOf(paragraph, marks);
     const problem = editable ? unwritable(paragraph) : null;
     const writable = editable && !problem;
     const className = [paragraph.style === "SUBTITLE" && "subtitle", paragraph.bullet && "bullet", writable && "writable"].filter(Boolean).join(" ") || undefined;
     const leave = (event: FocusEvent<HTMLElement>) => {
-      onEditing(null);
       onTyping(paragraph.id, null);
       const text = typedText(event.currentTarget);
-      if (text !== written) onWrite(paragraph.id, text);
+      onLeave(paragraph.id, text !== written && onWrite(paragraph.id, text));
     };
     return (
       <Tag
@@ -136,10 +138,10 @@ const ParagraphView = memo(
       </Tag>
     );
   },
-  (before, after) => before.editing && after.editing,
+  (before, after) => (before.editing || before.settling) && (after.editing || after.settling),
 );
 
-function BlockView({ block, ...rest }: { block: Block; marks: Map<string, Mark[]>; written: (paragraph: Paragraph) => string; editing: string | null; editable: boolean; onEditing(block: string | null): void; onWrite: Props["onWrite"]; onTyping: Props["onTyping"] } & Shared) {
+function BlockView({ block, ...rest }: { block: Block; marks: Map<string, Mark[]>; written: (paragraph: Paragraph) => string; editing: string | null; settling: string[]; editable: boolean; onEditing(block: string): void; onLeave: ParagraphProps["onLeave"]; onWrite: Props["onWrite"]; onTyping: Props["onTyping"] } & Shared) {
   if (block.kind === "table")
     return (
       <table data-block={block.id}>
@@ -154,8 +156,8 @@ function BlockView({ block, ...rest }: { block: Block; marks: Map<string, Mark[]
         </tbody>
       </table>
     );
-  const { marks, written, editing, ...shared } = rest;
-  return <ParagraphView paragraph={block} marks={marks.get(block.id) ?? []} written={written(block)} editing={editing === block.id} {...shared} />;
+  const { marks, written, editing, settling, ...shared } = rest;
+  return <ParagraphView paragraph={block} marks={marks.get(block.id) ?? []} written={written(block)} editing={editing === block.id} settling={settling.includes(block.id)} {...shared} />;
 }
 
 /** What one of the user's own marks changes in the text, as the paragraph shows it. */
@@ -171,13 +173,21 @@ export function Doc({ snapshot, changes, editable, focused, onFocus, onOpen, onW
     return () => article.removeEventListener("beforeinput", breakLineOnEnter);
   }, []);
   const [editing, setEditing] = useState<string | null>(null);
-  /** Bumped when the user leaves a paragraph, so React draws it afresh rather than on top of what they typed. */
+  /** Bumped when the user is done with a paragraph, so React draws it afresh rather than on top of what they typed. */
   const [drawn, setDrawn] = useState<Record<string, number>>({});
+  const redraw = (blocks: string[]) => setDrawn((counts) => ({ ...counts, ...Object.fromEntries(blocks.map((block) => [block, (counts[block] ?? 0) + 1])) }));
+  const [settling, setSettling] = useState<string[]>([]);
+  useEffect(() => {
+    const settled = settling.filter((block) => block !== editing);
+    if (!settled.length) return;
+    redraw(settled);
+    setSettling((blocks) => blocks.filter((block) => !settled.includes(block)));
+  }, [snapshot, changes]);
   const written = (paragraph: Paragraph) => editedText(paragraph.text, (marks.get(paragraph.id) ?? []).filter(({ mine }) => mine).map(editOfMark));
-  const write = (block: string, text: string) => onWrite(block, text);
-  const onEditing = (block: string | null) => {
-    if (editing && block === null) setDrawn((counts) => ({ ...counts, [editing]: (counts[editing] ?? 0) + 1 }));
-    setEditing(block);
+  const leave = (block: string, wrote: boolean) => {
+    setEditing(null);
+    if (wrote) setSettling((blocks) => [...blocks, block]);
+    else redraw([block]);
   };
   return (
     <article className="page" ref={page}>
@@ -185,7 +195,7 @@ export function Doc({ snapshot, changes, editable, focused, onFocus, onOpen, onW
         <section key={tab.id} data-tab={tab.id}>
           {snapshot.tabs.length > 1 && <div className="tab-title">{tab.title}</div>}
           {tab.blocks.map((block) => (
-            <BlockView key={`${block.id}:${drawn[block.id] ?? 0}`} block={block} marks={marks} written={written} editing={editing} editable={editable} onEditing={onEditing} onWrite={write} onTyping={onTyping} focused={focused} onFocus={onFocus} onOpen={onOpen} />
+            <BlockView key={`${block.id}:${drawn[block.id] ?? 0}`} block={block} marks={marks} written={written} editing={editing} settling={settling} editable={editable} onEditing={setEditing} onLeave={leave} onWrite={onWrite} onTyping={onTyping} focused={focused} onFocus={onFocus} onOpen={onOpen} />
           ))}
         </section>
       ))}

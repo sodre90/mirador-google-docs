@@ -2,7 +2,7 @@ import { readFileSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
-import { expect, test, type FrameLocator, type Page } from "@playwright/test";
+import { expect, test, type FrameLocator, type Locator, type Page } from "@playwright/test";
 import { fakeGcloud } from "../tests/fake-google.ts";
 
 const miradorDir = process.env.MIRADOR_DIR ?? join(import.meta.dirname, "..", "..", "visualized-claude-sessions");
@@ -134,6 +134,19 @@ async function selectByHandles(page: Page, block: string, text: string) {
       }
       throw new Error(`${text} isn't in one piece of ${paragraph.textContent}`);
     }, text);
+}
+
+/** A paragraph's text in each of the next `frames` frames, found afresh each time in case it is drawn again. */
+async function textOverFrames(paragraph: Locator, frames: number) {
+  return paragraph.evaluate(async (element: HTMLElement, frames) => {
+    const selector = `[data-block="${element.dataset.block}"]`;
+    const texts: string[] = [];
+    for (const _ of Array(frames)) {
+      texts.push(element.ownerDocument.querySelector(selector)?.textContent ?? "");
+      await new Promise(requestAnimationFrame);
+    }
+    return texts;
+  }, frames);
 }
 
 /** Puts the caret right after `text` in a paragraph, as a click there would, ready to type. */
@@ -551,6 +564,7 @@ test.describe("on a touch screen", () => {
       await expect(view(page).locator(".draft")).toHaveCSS("bottom", "0px");
       await expect(view(page).getByRole("button", { name: "Done" })).toBeVisible();
       await view(page).locator('[data-block="p6"] .mark-deleted').tap();
+      expect(await textOverFrames(p4, 20)).not.toContainEqual(expect.not.stringContaining("by Q3. Then"));
       await expect(view(page).getByRole("button", { name: "Done" })).toBeVisible();
       await expect(p4.locator(".added.mine")).toHaveText(" Then");
       await caretAfter(page, "p4", "Then");

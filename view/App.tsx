@@ -674,10 +674,11 @@ export function App({ state }: { state: AppDocumentState<GoogleDoc> }) {
       writtenChange(document.snapshot!, document.changes, block, text);
     } catch (error) {
       setNotice((error as Error).message);
-      return;
+      return false;
     }
     setNotice(null);
     mirador().apply({ op: "write", block, text });
+    return true;
   };
   const running = state.task?.state === "running";
   const readAt = document.snapshot && new Date(document.snapshot.pulledAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
