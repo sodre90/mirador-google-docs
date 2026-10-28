@@ -95,6 +95,55 @@ function typedText(paragraph: HTMLElement): string {
   return textOf(paragraph).replaceAll(CARET_HOLDER, "");
 }
 
+const STEPS: Record<string, { by: 1 | -1; vertical: boolean }> = {
+  ArrowDown: { by: 1, vertical: true },
+  ArrowUp: { by: -1, vertical: true },
+  ArrowRight: { by: 1, vertical: false },
+  ArrowLeft: { by: -1, vertical: false },
+};
+
+const caretPlace = () => {
+  const selection = window.getSelection();
+  const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+  return range && { node: selection!.focusNode, offset: selection!.focusOffset, rect: range.getBoundingClientRect() };
+};
+
+/** Puts the caret in a paragraph: at its start or end, or, coming from above or below, as near across as it was. */
+function placeCaretIn(paragraph: HTMLElement, by: 1 | -1, across: number | null) {
+  paragraph.focus();
+  paragraph.scrollIntoView({ block: "nearest" });
+  const box = paragraph.getBoundingClientRect();
+  const atPoint = across === null ? null : paragraph.ownerDocument.caretRangeFromPoint?.(across, by > 0 ? box.top + 4 : box.bottom - 4);
+  const range = atPoint && paragraph.contains(atPoint.startContainer) ? atPoint : paragraph.ownerDocument.createRange();
+  if (range !== atPoint) {
+    range.selectNodeContents(paragraph);
+    range.collapse(by > 0);
+  }
+  window.getSelection()!.removeAllRanges();
+  window.getSelection()!.addRange(range);
+}
+
+/**
+ * Arrow keys go on into the next paragraph the user can type in, as in Docs: each paragraph is its own place to type,
+ * so the browser's own caret stops at its edges. When a key leaves the caret where it was, or on its line for up and
+ * down, the caret moves on.
+ */
+function stepAcrossParagraphs(event: KeyboardEvent) {
+  const step = STEPS[event.key];
+  if (!step || event.shiftKey || event.metaKey || event.ctrlKey || event.altKey) return;
+  const paragraph = (event.target as Element).closest<HTMLElement>(".writable");
+  const before = caretPlace();
+  if (!paragraph || !before) return;
+  requestAnimationFrame(() => {
+    const after = caretPlace();
+    const moved = step.vertical ? after && Math.abs(after.rect.top - before.rect.top) > 2 : after && (after.node !== before.node || after.offset !== before.offset);
+    if (moved || paragraph.ownerDocument.activeElement !== paragraph) return;
+    const writable = [...paragraph.closest("article")!.querySelectorAll<HTMLElement>(".writable")];
+    const next = writable[writable.indexOf(paragraph) + step.by];
+    if (next) placeCaretIn(next, step.by, step.vertical ? before.rect.left : null);
+  });
+}
+
 /** Formatting such as ⌘B would only look made in the page: the box's buttons make it a change instead. */
 function refuseFormatting(event: InputEvent) {
   if (event.inputType.startsWith("format")) event.preventDefault();
@@ -238,7 +287,9 @@ export function Doc({ snapshot, changes, editable, focused, onFocus, onOpen, onW
     const article = page.current!;
     article.addEventListener("beforeinput", breakLineOnEnter);
     article.addEventListener("beforeinput", refuseFormatting);
+    article.addEventListener("keydown", stepAcrossParagraphs);
     return () => {
+      article.removeEventListener("keydown", stepAcrossParagraphs);
       article.removeEventListener("beforeinput", breakLineOnEnter);
       article.removeEventListener("beforeinput", refuseFormatting);
     };

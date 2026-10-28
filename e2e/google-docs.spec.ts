@@ -612,6 +612,35 @@ test("the agent proposes edits to a Google doc shown in Mirador; you select text
   });
 });
 
+test.describe("arrow keys", () => {
+  test("move on to the next paragraph you can type in, past a table or one with suggestions, and back", async ({ page }) => {
+    const conversation = await startWithTheAgent(page);
+    await tool(conversation, "app_open", { app: "google-docs", file: "arrows.gdoc" });
+    await tool(conversation, "apply", { op: { op: "link", url: URL } });
+    await tool(conversation, "app_run", { task: "pull" });
+    const typingIn = () => view(page).locator(":focus").getAttribute("data-block");
+    await caretAfter(page, "p2", "Q3 🚀.");
+    await page.keyboard.press("ArrowDown");
+    await expect.poll(typingIn).toBe("p3");
+    await page.keyboard.press("End");
+    await page.keyboard.press("ArrowDown");
+    await expect.poll(typingIn).toBe("p4");
+    await page.keyboard.press("ArrowUp");
+    await expect.poll(typingIn).toBe("p3");
+    await caretAfter(page, "p3", "Owner: Ana");
+    await page.keyboard.press("ArrowRight");
+    await expect.poll(typingIn).toBe("p4");
+    await page.keyboard.type("Then ");
+    await expect(view(page).locator('[data-block="p4"]')).toContainText("Then We ship");
+    await page.keyboard.press("Home");
+    await page.keyboard.press("ArrowLeft");
+    await expect.poll(typingIn).toBe("p3");
+    await caretAfter(page, "p4", "review by Q3.");
+    await page.keyboard.press("ArrowRight");
+    await expect.poll(typingIn).toBe("p6");
+  });
+});
+
 test.describe("on a touch screen", () => {
   test.use({ hasTouch: true, viewport: { width: 1000, height: 900 } });
 
