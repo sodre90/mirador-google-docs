@@ -3,9 +3,10 @@ import { snapshotOf } from "../shared/convert.ts";
 import type { GoogleDoc, Snapshot } from "../shared/document.ts";
 import { countOf } from "../shared/operations.ts";
 import { planPush } from "../shared/push.ts";
+import { SIGN_IN } from "../shared/sign-in.ts";
 import { batchUpdate, getDocument, GoogleError, signedInAccounts, signIn, SignInNeeded, tokenFor } from "./google.ts";
 
-const NOBODY_SIGNED_IN = "No Google account is signed in yet: the user signs one in with Sign in a Google account in the view.";
+const NOBODY_SIGNED_IN = `No Google account is signed in yet: the user signs one in with ${SIGN_IN} in the view.`;
 
 /** Reads the doc with the account that read it last, or else with each signed-in account until one may. */
 async function read(document: GoogleDoc, signal: AbortSignal): Promise<{ snapshot: Snapshot; token: string }> {
@@ -30,19 +31,18 @@ async function read(document: GoogleDoc, signal: AbortSignal): Promise<{ snapsho
       refusals.push(`${account} can't open it (${error.status}).`);
     }
   }
-  throw new Error(`None of the signed-in accounts could read ${document.url}: ${refusals.join(" ")} Sign in an account that can open the doc.`);
+  throw new Error(`None of the signed-in accounts could read ${document.url}: ${refusals.join(" ")} Sign in an account that can open it with ${SIGN_IN}.`);
 }
 
-export const pull: AppTask<GoogleDoc> = {
-  title: "Read the doc from Google Docs",
-  async run({ document, apply, progress, signal }: AppTaskContext<GoogleDoc>) {
-    progress(null, "Reading the doc");
-    const { snapshot } = await read(document, signal);
-    await apply({ op: "pulled", snapshot });
-    const blocks = snapshot.tabs.reduce((sum, tab) => sum + tab.blocks.length, 0);
-    return `Read “${snapshot.title}” as ${snapshot.account}: ${countOf(blocks, "block")}, ${countOf(snapshot.threads.length, "comment thread")}, ${countOf(snapshot.suggestions.length, "open suggestion")}.`;
-  },
-};
+async function readTheDoc({ document, apply, progress, signal }: AppTaskContext<GoogleDoc>) {
+  progress(null, "Reading the doc");
+  const { snapshot } = await read(document, signal);
+  await apply({ op: "pulled", snapshot });
+  const blocks = snapshot.tabs.reduce((sum, tab) => sum + tab.blocks.length, 0);
+  return `Read “${snapshot.title}” as ${snapshot.account}: ${countOf(blocks, "block")}, ${countOf(snapshot.threads.length, "comment thread")}, ${countOf(snapshot.suggestions.length, "open suggestion")}.`;
+}
+
+export const pull: AppTask<GoogleDoc> = { title: "Read the doc from Google Docs", run: readTheDoc };
 
 export const push: AppTask<GoogleDoc> = {
   title: "Send the approved changes to Google Docs",
@@ -104,11 +104,16 @@ export const push: AppTask<GoogleDoc> = {
   },
 };
 
+const linkedButUnread = (document: GoogleDoc) => document.documentId !== null && document.snapshot === null;
+
+/** Reads a doc that is linked but unread at once, as signing in is what reading it waited for. */
 export const signInTask: AppTask<GoogleDoc> = {
-  title: "Sign in a Google account",
-  async run({ progress, signal }: AppTaskContext<GoogleDoc>) {
-    progress(null, "Waiting for the sign-in in the browser");
-    await signIn(signal);
-    return `Signed in: ${(await signedInAccounts()).join(", ")}.`;
+  title: SIGN_IN,
+  async run(context: AppTaskContext<GoogleDoc>) {
+    context.progress(null, "Waiting for the sign-in in the browser");
+    await signIn(context.signal);
+    const signedIn = `Signed in: ${(await signedInAccounts()).join(", ")}.`;
+    if (!linkedButUnread(context.document)) return signedIn;
+    return `${signedIn} ${await readTheDoc(context).catch((error: Error) => `The doc couldn't be read yet: ${error.message}`)}`;
   },
 };

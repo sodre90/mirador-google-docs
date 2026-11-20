@@ -740,3 +740,49 @@ test.describe("in a narrow canvas panel", () => {
     await expect(view(page).getByRole("button", { name: "Edit" })).toHaveCount(0);
   });
 });
+
+test.describe("before the doc is read", () => {
+  test("Sign in and Read the doc wait in the view itself, signing in reads the linked doc, and a read that needs a sign-in offers one", async ({ page }) => {
+    const conversation = await startWithTheAgent(page);
+    writeFileSync(join(gcloud.folder, "accounts"), "");
+    try {
+      await tool(conversation, "app_open", { app: "google-docs", file: "first-read.gdoc" });
+
+      await test.step("with no doc linked, Sign in is in sight and there is no ⋮ menu", async () => {
+        await expect(view(page).getByRole("button", { name: "Sign in a Google account" })).toBeVisible();
+        await expect(view(page).getByRole("button", { name: "More" })).toHaveCount(0);
+      });
+
+      await test.step("linked, Read the doc is in sight beside Sign in, and reading with nobody signed in says so", async () => {
+        await view(page).getByLabel("Google Docs address").fill(URL);
+        await view(page).getByRole("button", { name: "Link", exact: true }).click();
+        await view(page).getByRole("button", { name: "Read the doc" }).click();
+        await expect(view(page).locator(".problem")).toContainText("No Google account is signed in yet");
+        await expect(view(page).getByRole("button", { name: "Sign in a Google account" })).toHaveCount(1);
+      });
+
+      await test.step("signing in reads the linked doc at once", async () => {
+        writeFileSync(join(gcloud.folder, "next-sign-in"), "ana@example.com\n");
+        await view(page).getByRole("button", { name: "Sign in a Google account" }).click();
+        await expect(view(page).locator(".task.done")).toHaveText("Signed in: ana@example.com. Read “Launch plan” as ana@example.com: 8 blocks, 2 comment threads, 1 open suggestion.");
+        await expect(view(page).locator("h1")).toHaveText("Launch plan");
+        await expect(view(page).getByRole("button", { name: "Sign in a Google account" })).toBeHidden();
+      });
+
+      await test.step("when a session ends, the problem it makes offers Sign in beside it", async () => {
+        writeFileSync(join(gcloud.folder, "expired"), "ana@example.com\n");
+        await view(page).getByRole("button", { name: "More" }).click();
+        await view(page).getByRole("menu").getByRole("button", { name: "Read again" }).click();
+        const problem = view(page).locator(".problem");
+        await expect(problem).toContainText("ana@example.com's Google sign-in has ended or needs confirming");
+        writeFileSync(join(gcloud.folder, "expired"), "");
+        writeFileSync(join(gcloud.folder, "next-sign-in"), "");
+        await problem.getByRole("button", { name: "Sign in a Google account" }).click();
+        await expect(view(page).locator(".task.done")).toHaveText("Signed in: ana@example.com.");
+      });
+    } finally {
+      writeFileSync(join(gcloud.folder, "accounts"), "ana@example.com\n");
+      writeFileSync(join(gcloud.folder, "expired"), "");
+    }
+  });
+});

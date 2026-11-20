@@ -81,6 +81,9 @@ ul {
 .empty {
   padding: 24px 16px;
 }
+.empty .row + .row {
+  margin-top: 8px;
+}
 .empty input {
   flex: 1;
   min-width: 260px;

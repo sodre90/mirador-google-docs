@@ -58,7 +58,7 @@ describe("pull", () => {
     writeFileSync(join(gcloud.folder, "accounts"), "home@example.com\nwork@example.com\n");
     writeFileSync(join(gcloud.folder, "expired"), "work@example.com\n");
     await expect(run(pull, checkedDocument({ url: URL }))).rejects.toThrow(
-      "None of the signed-in accounts could read https://docs.google.com/document/d/1testDocumentIdForMiradorGoogleDocs/edit: home@example.com can't open it (403). work@example.com's Google sign-in has ended or needs confirming (ERROR: (gcloud.auth.print-access-token) Reauthentication failed. cannot prompt during non-interactive execution.). Sign it in again with Sign in a Google account.",
+      "None of the signed-in accounts could read https://docs.google.com/document/d/1testDocumentIdForMiradorGoogleDocs/edit: home@example.com can't open it (403). work@example.com's Google sign-in has ended or needs confirming (ERROR: (gcloud.auth.print-access-token) Reauthentication failed. cannot prompt during non-interactive execution.): sign it in again. Sign in an account that can open it with Sign in a Google account.",
     );
     expect(google.tokens.join()).not.toContain("work@example.com");
   });
@@ -124,7 +124,34 @@ describe("push", () => {
   });
 });
 
-test("sign-in adds the account the user picked in the browser", async () => {
-  writeFileSync(join(gcloud.folder, "next-sign-in"), "new@example.com\n");
-  expect((await run(signInTask, checkedDocument({ url: URL }), you)).summary).toBe("Signed in: home@example.com, work@example.com, new@example.com.");
+describe("sign-in", () => {
+  test("adds the account the user picked in the browser", async () => {
+    writeFileSync(join(gcloud.folder, "next-sign-in"), "new@example.com\n");
+    const read = (await run(pull, checkedDocument({ url: URL }))).document;
+    expect((await run(signInTask, read, you)).summary).toBe("Signed in: home@example.com, work@example.com, new@example.com.");
+  });
+
+  test("reads a doc that is linked but unread, as that is what it waited for", async () => {
+    writeFileSync(join(gcloud.folder, "accounts"), "");
+    writeFileSync(join(gcloud.folder, "next-sign-in"), "work@example.com\n");
+    const { summary, document } = await run(signInTask, checkedDocument({ url: URL }), you);
+    expect(summary).toBe("Signed in: work@example.com. Read “Launch plan” as work@example.com: 7 blocks, 1 comment thread, 1 open suggestion.");
+    expect(document.snapshot!.account).toBe("work@example.com");
+  });
+
+  test("still says it signed in when the account it signed in can't read the doc", async () => {
+    writeFileSync(join(gcloud.folder, "accounts"), "");
+    writeFileSync(join(gcloud.folder, "next-sign-in"), "home@example.com\n");
+    const { summary, document } = await run(signInTask, checkedDocument({ url: URL }), you);
+    expect(summary).toBe(
+      "Signed in: home@example.com. The doc couldn't be read yet: None of the signed-in accounts could read https://docs.google.com/document/d/1testDocumentIdForMiradorGoogleDocs/edit: home@example.com can't open it (403). Sign in an account that can open it with Sign in a Google account.",
+    );
+    expect(document.snapshot).toBeNull();
+  });
+
+  test("only signs in when no doc is linked", async () => {
+    writeFileSync(join(gcloud.folder, "next-sign-in"), "");
+    expect((await run(signInTask, checkedDocument({}), you)).summary).toBe("Signed in: home@example.com, work@example.com.");
+    expect(google.tokens).toEqual([]);
+  });
 });

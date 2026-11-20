@@ -46,7 +46,7 @@ export async function signedInAccounts(): Promise<string[]> {
 
 export async function tokenFor(account: string): Promise<string> {
   const { code, stdout, stderr } = await gcloud(["auth", "print-access-token", account]);
-  if (code !== 0) throw new SignInNeeded(`${account}'s Google sign-in has ended or needs confirming (${reasonOf(stderr) || `gcloud exited with ${code}`}). Sign it in again with Sign in a Google account.`);
+  if (code !== 0) throw new SignInNeeded(`${account}'s Google sign-in has ended or needs confirming (${reasonOf(stderr) || `gcloud exited with ${code}`}): sign it in again.`);
   return stdout.trim();
 }
 

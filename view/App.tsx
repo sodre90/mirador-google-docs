@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "re
 import type { AppDocumentState } from "../mirador/api.ts";
 import { findParagraph, type Change, type GoogleDoc, type GoogleSuggestion, type List, type ParagraphStyle, type Post, type Snapshot, type TextStyle, type Thread } from "../shared/document.ts";
 import { boxOperations, changeSummary, changesText, formatOf, pendingDecisionOn, shownStyled, type BoxRequest } from "../shared/operations.ts";
+import { SIGN_IN, signingInFixes } from "../shared/sign-in.ts";
 import { writtenChange } from "../shared/write.ts";
 import { Doc, selectionIn, type Selected, type SelectedPart } from "./Doc.tsx";
 
@@ -39,6 +40,18 @@ function useKeyboardHeight() {
   }, []);
 }
 
+const SignInButton = ({ disabled = false }: { disabled?: boolean }) => (
+  <button disabled={disabled} onClick={() => mirador().run("sign-in")}>
+    {SIGN_IN}
+  </button>
+);
+
+const ReadButton = ({ disabled, again }: { disabled: boolean; again: boolean }) => (
+  <button className={again ? undefined : "primary"} disabled={disabled} onClick={() => mirador().run("pull")}>
+    {again ? "Read again" : "Read the doc"}
+  </button>
+);
+
 function TaskLine({ state }: { state: AppDocumentState<GoogleDoc> }) {
   const { task, problem } = state;
   if (problem) return <p className="problem">The file can't be read: {problem}</p>;
@@ -50,12 +63,24 @@ function TaskLine({ state }: { state: AppDocumentState<GoogleDoc> }) {
       </p>
     );
   if (task.state === "failed" && task.name === "push" && task.author.kind === "agent") return <p className="task">The agent asked to send the changes. Look them over, then press Send.</p>;
-  if (task.state === "failed") return <p className="problem">{task.problem}</p>;
+  if (task.state === "failed")
+    return (
+      <p className="problem">
+        {task.problem}
+        {state.document.snapshot && signingInFixes(task.problem ?? "") && (
+          <>
+            {" "}
+            <SignInButton />
+          </>
+        )}
+      </p>
+    );
   if (task.state === "done") return <p className="task done">{task.summary}</p>;
   return <p className="task">{task.title}: stopped.</p>;
 }
 
-function LinkForm() {
+/** Before the doc is read, what reading it needs is in sight, not in the ⋮ menu. */
+function LinkForm({ busy }: { busy: boolean }) {
   const [url, setUrl] = useState("");
   return (
     <div className="empty">
@@ -65,6 +90,21 @@ function LinkForm() {
         <button disabled={!url.trim()} onClick={() => mirador().apply({ op: "link", url: url.trim() })}>
           Link
         </button>
+      </div>
+      <div className="row">
+        <SignInButton disabled={busy} />
+      </div>
+    </div>
+  );
+}
+
+function Unread({ url, busy }: { url: string; busy: boolean }) {
+  return (
+    <div className="empty">
+      <p>Linked to {url}. Read the doc to see it here, with a signed-in Google account that can open it.</p>
+      <div className="row">
+        <ReadButton disabled={busy} again={false} />
+        <SignInButton disabled={busy} />
       </div>
     </div>
   );
@@ -789,20 +829,8 @@ export function App({ state }: { state: AppDocumentState<GoogleDoc> }) {
     mirador().apply({ op: "write", block, text });
     return true;
   };
-  const running = state.task?.state === "running";
+  const busy = state.task?.state === "running";
   const readAt = document.snapshot && new Date(document.snapshot.pulledAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  const actions = (
-    <>
-      {document.url && (
-        <button disabled={running} onClick={() => mirador().run("pull")}>
-          {document.snapshot ? "Read again" : "Read the doc"}
-        </button>
-      )}
-      <button disabled={running} onClick={() => mirador().run("sign-in")}>
-        Sign in a Google account
-      </button>
-    </>
-  );
   const openShowingText = (id: string | null) => {
     setOpen(id);
     setFocused(null);
@@ -853,16 +881,17 @@ export function App({ state }: { state: AppDocumentState<GoogleDoc> }) {
           <h2>{document.snapshot?.title ?? "Google Docs"}</h2>
           {document.snapshot && <span className="quiet">read {readAt}</span>}
         </div>
-        <MoreMenu>
-          {document.snapshot && <p className="quiet">Read as {document.snapshot.account}</p>}
-          {actions}
-          {document.snapshot && (
+        {document.snapshot && (
+          <MoreMenu>
+            <p className="quiet">Read as {document.snapshot.account}</p>
+            <ReadButton disabled={busy} again />
+            <SignInButton disabled={busy} />
             <label className="switch">
               <input type="checkbox" checked={document.directEdits} onChange={(event) => mirador().apply({ op: "direct-edits", on: event.target.checked })} />
               My edits go in directly, not as suggestions
             </label>
-          )}
-        </MoreMenu>
+          </MoreMenu>
+        )}
       </header>
       {touchScreen && document.snapshot && (
         <button className="pencil" aria-label={typingOn ? "Done" : "Edit"} aria-pressed={typingOn} onClick={switchTyping}>
@@ -876,9 +905,9 @@ export function App({ state }: { state: AppDocumentState<GoogleDoc> }) {
         </p>
       )}
       {!document.url ? (
-        <LinkForm />
+        <LinkForm busy={busy} />
       ) : !document.snapshot ? (
-        <p className="empty">Linked to {document.url}. Read the doc to see it here.</p>
+        <Unread url={document.url} busy={busy} />
       ) : (
         <div className="body">
           <div className="doc" ref={docArea}>
