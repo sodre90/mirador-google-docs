@@ -86,10 +86,7 @@ export function styledRun(run: TextRun, style: TextStyle | undefined): TextRun {
   if (!style) return run;
   const { link, ...flags } = style;
   const styled: TextRun = { ...run };
-  for (const [name, on] of Object.entries(flags) as [keyof typeof flags, boolean][]) {
-    if (on) styled[name] = true;
-    else delete styled[name];
-  }
+  for (const [name, on] of Object.entries(flags) as [keyof typeof flags, boolean][]) styled[name] = on;
   if (link === null) delete styled.link;
   else if (link !== undefined) styled.link = link;
   return styled;

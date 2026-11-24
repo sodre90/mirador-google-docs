@@ -1,13 +1,16 @@
-import { OBJECT_MARK, TEXT_STYLES, type Block, type GoogleDoc, type Paragraph, type Snapshot } from "./document.ts";
+import { OBJECT_MARK, TEXT_STYLES, type Block, type GoogleDoc, type Paragraph, type Snapshot, type TextRun } from "./document.ts";
 import { changeSummary, OPERATIONS_HELP } from "./operations.ts";
 import { STYLE_NAMES } from "./styles.ts";
 
+
+/** An object as the agent reads it: a smart chip by its kind and name, as [person Ana Example], and anything else as [object]. */
+const objectText = ({ chip }: TextRun) => (chip ? `[${chip.kind} ${chip.label}]` : "[object]");
 
 /** A paragraph's text with Google's own suggestions marked: [+inserted+] and [-deleted-]. */
 function markedText(paragraph: Paragraph) {
   return paragraph.runs
     .map((run) => {
-      const text = run.object ? "[object]" : run.text;
+      const text = run.object ? objectText(run) : run.text;
       if (run.inserted) return `[+${text}+]`;
       if (run.deleted) return `[-${text}-]`;
       if (run.restyled) return `[~${text}~]`;
@@ -42,7 +45,7 @@ function snapshotText(snapshot: Snapshot) {
   const hasObjects = snapshot.tabs.some((tab) => tab.blocks.some((block) => block.kind === "paragraph" && block.text.includes(OBJECT_MARK)));
   const notes = [
     hasMarks && "Text in [+…+] and [-…-] is the doc's open suggestions, and text in [~…~] has a suggested change of style; a quote includes their text but not the brackets.",
-    hasObjects && `[object] is an image or chip; in a quote it is the character ${JSON.stringify(OBJECT_MARK)}.`,
+    hasObjects && `[object] is an image or another object, and [person …], [date …] and [link …] are smart chips; in a quote each is the character ${JSON.stringify(OBJECT_MARK)}.`,
   ].filter(Boolean);
   const tabs = snapshot.tabs.map((tab) => [snapshot.tabs.length > 1 ? `Tab “${tab.title}”:` : null, ...tab.blocks.map(blockLine)].filter(Boolean).join("\n"));
   const threads = snapshot.threads.length

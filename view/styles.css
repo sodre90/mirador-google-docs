@@ -168,8 +168,23 @@ ul {
 .strike {
   text-decoration: line-through;
 }
-.object {
+.object:not(.chip) {
   color: light-dark(#5f6368, #9aa0a6);
+}
+.page :where(.chip) {
+  display: inline-block;
+  padding: 0 0.5em;
+  border-radius: 0.85em;
+  background: light-dark(#f1f3f4, #3c4043);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.page :where(.chip-person) {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.page :where(.chip-link) {
+  color: light-dark(#0b57d0, #8ab4f8);
 }
 .their-insertion {
   color: light-dark(#137333, #81c995);

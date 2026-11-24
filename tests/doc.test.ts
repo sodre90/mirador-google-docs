@@ -87,6 +87,142 @@ describe("reading a Google doc", () => {
   });
 });
 
+/** A colour Docs sends as OptionalColor: the rgbColor is nested under the color it is set with. */
+const orange = { color: { rgbColor: { red: 1, green: 0.33333334, blue: 0.050980393 } } };
+const black = { color: { rgbColor: {} } };
+
+/** A doc with smart chips in a paragraph and a table cell, and the named styles and run styles Docs sends with them. */
+const styledGoogle = (): GoogleDocument =>
+  ({
+    title: "Advisory",
+    revisionId: "rev-styled",
+    tabs: [
+      {
+        tabProperties: { tabId: "t.0", title: "Advisory" },
+        documentTab: {
+          namedStyles: {
+            styles: [
+              { namedStyleType: "NORMAL_TEXT", textStyle: { bold: false, italic: false, underline: false, strikethrough: false, foregroundColor: black, fontSize: { magnitude: 11, unit: "PT" }, weightedFontFamily: { fontFamily: "Arial", weight: 400 } } },
+              { namedStyleType: "HEADING_1", textStyle: { foregroundColor: orange, fontSize: { magnitude: 23, unit: "PT" }, weightedFontFamily: { fontFamily: "Plus Jakarta Sans", weight: 500 } } },
+              { namedStyleType: "HEADING_2", textStyle: { bold: true, fontSize: { magnitude: 17, unit: "PT" } } },
+              { namedStyleType: "HEADING_6", textStyle: { italic: true, fontSize: { magnitude: 11, unit: "PT" } } },
+            ],
+          },
+          body: {
+            content: [
+              { endIndex: 1, sectionBreak: {} },
+              { startIndex: 1, endIndex: 13, paragraph: { elements: [{ startIndex: 1, endIndex: 13, textRun: { content: "Advisory\n", textStyle: {} } }], paragraphStyle: { namedStyleType: "HEADING_1" } } },
+              {
+                startIndex: 13,
+                endIndex: 27,
+                paragraph: {
+                  elements: [
+                    { startIndex: 13, endIndex: 19, textRun: { content: "Owned: ", textStyle: { foregroundColor: orange, fontSize: { magnitude: 10, unit: "PT" }, weightedFontFamily: { fontFamily: "Plus Jakarta Sans", weight: 500 } } } },
+                    { startIndex: 19, endIndex: 20, person: { personProperties: { name: "Ana Example", email: "ana@example.com" } } },
+                    { startIndex: 20, endIndex: 22, textRun: { content: ", ", textStyle: {} } },
+                    { startIndex: 22, endIndex: 23, dateElement: { dateElementProperties: { displayText: "Nov 20, 2026" } } },
+                    { startIndex: 23, endIndex: 25, textRun: { content: ", ", textStyle: {} } },
+                    { startIndex: 25, endIndex: 26, richLink: { richLinkProperties: { title: "Advisory 2026-1025", uri: "https://docs.google.com/document/d/1other/edit" } } },
+                    { startIndex: 26, endIndex: 27, textRun: { content: "\n", textStyle: {} } },
+                  ],
+                  paragraphStyle: { namedStyleType: "NORMAL_TEXT" },
+                },
+              },
+              { startIndex: 27, endIndex: 39, paragraph: { elements: [{ startIndex: 27, endIndex: 39, textRun: { content: "Heading two\n", textStyle: {} } }], paragraphStyle: { namedStyleType: "HEADING_2" } } },
+              { startIndex: 39, endIndex: 50, paragraph: { elements: [{ startIndex: 39, endIndex: 50, textRun: { content: "Not italic\n", textStyle: { italic: false } } }], paragraphStyle: { namedStyleType: "HEADING_6" } } },
+              {
+                startIndex: 50,
+                endIndex: 65,
+                table: {
+                  rows: 1,
+                  columns: 1,
+                  tableRows: [
+                    {
+                      tableCells: [
+                        {
+                          content: [
+                            {
+                              startIndex: 52,
+                              endIndex: 61,
+                              paragraph: {
+                                elements: [
+                                  { startIndex: 52, endIndex: 59, textRun: { content: "Owner: " } },
+                                  { startIndex: 59, endIndex: 60, person: { personProperties: { name: "Ana Example" } } },
+                                  { startIndex: 60, endIndex: 61, textRun: { content: "\n" } },
+                                ],
+                                paragraphStyle: { namedStyleType: "NORMAL_TEXT" },
+                              },
+                            },
+                          ],
+                        },
+                      ],
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        },
+      },
+    ],
+  }) as unknown as GoogleDocument;
+
+describe("the doc's own look", () => {
+  test("reads smart chips as named objects that still take one place", () => {
+    const read = snapshot(styledGoogle());
+    expect(paragraph(read, "p2").text).toBe(`Owned: ${OBJECT_MARK}, ${OBJECT_MARK}, ${OBJECT_MARK}`);
+    expect(paragraph(read, "p2").runs.map(({ text, object, chip }) => [text, object ?? false, chip ?? null])).toEqual([
+      ["Owned: ", false, null],
+      [OBJECT_MARK, true, { kind: "person", label: "Ana Example", url: "mailto:ana@example.com" }],
+      [", ", false, null],
+      [OBJECT_MARK, true, { kind: "date", label: "Nov 20, 2026" }],
+      [", ", false, null],
+      [OBJECT_MARK, true, { kind: "link", label: "Advisory 2026-1025", url: "https://docs.google.com/document/d/1other/edit" }],
+    ]);
+    expect(read.tabs[0]!.blocks.find((block) => block.id === "t1")).toEqual({ kind: "table", id: "t1", rows: [["Owner: Ana Example"]] });
+  });
+
+  test("reads the doc's named styles and each run's own colour, size and family over them", () => {
+    const read = snapshot(styledGoogle());
+    expect(read.tabs[0]!.styles).toMatchObject({
+      NORMAL_TEXT: { bold: false, italic: false, color: "#000000", fontSize: 11, fontFamily: "Arial", fontWeight: 400 },
+      HEADING_1: { color: "#ff550d", fontSize: 23, fontFamily: "Plus Jakarta Sans", fontWeight: 500 },
+      HEADING_2: { bold: true, color: "#000000", fontSize: 17, fontFamily: "Arial", fontWeight: 400 },
+      HEADING_6: { italic: true, fontSize: 11, fontFamily: "Arial" },
+    });
+    expect(paragraph(read, "p1").style).toBe("HEADING_1");
+    expect(paragraph(read, "p2").runs[0]).toMatchObject({ color: "#ff550d", fontSize: 10, fontFamily: "Plus Jakarta Sans", fontWeight: 500 });
+    expect(paragraph(read, "p4").runs[0].italic).toBe(false);
+    expect(snapshot().tabs.map(({ styles }) => styles)).toEqual([{}, {}]);
+  });
+
+  test("a chip without a name shows its address or its kind", () => {
+    const google = styledGoogle() as unknown as { tabs: { documentTab: { body: { content: { paragraph?: { elements: Record<string, { richLinkProperties?: object; dateElementProperties?: object }>[] } }[] } } }[] };
+    const [, , chips] = google.tabs[0]!.documentTab.body.content;
+    chips!.paragraph!.elements[3]!.dateElement!.dateElementProperties = { displayText: "" };
+    chips!.paragraph!.elements[5]!.richLink!.richLinkProperties = { title: "", uri: "https://docs.google.com/document/d/1other/edit" };
+    const read = snapshot(google as unknown as GoogleDocument);
+    expect(paragraph(read, "p2").runs.flatMap(({ chip }) => (chip ? [chip.label] : []))).toEqual(["Ana Example", "Date", "https://docs.google.com/document/d/1other/edit"]);
+  });
+
+  test("Bold and Italic go by the named style the text shows, a pending one included, under its own flags", () => {
+    const styled = (): GoogleDoc => ({ ...checkedDocument({ url: URL }), snapshot: snapshot(styledGoogle()) });
+    const heading = { block: "p3", at: 0, quote: "Heading" };
+    expect(boxOperations(styled(), [heading], { toggle: "bold" })).toEqual({ operations: [{ op: "format", ...heading, bold: false }] });
+    expect(() => applyOperation(styled(), { op: "format", block: "p3", quote: "Heading", bold: true }, agent)).toThrow("“Heading” is bold already.");
+    expect(applyOperation(styled(), { op: "format", block: "p3", quote: "Heading", bold: false }, agent).summary).toContain("not bold");
+    expect(boxOperations(styled(), [{ block: "p4", at: 0, quote: "Not" }], { toggle: "italic" })).toEqual({ operations: [{ op: "format", block: "p4", at: 0, quote: "Not", italic: true }] });
+    const restyled = applyOperation(styled(), { op: "paragraph", block: "p2", style: "HEADING_2" }, agent).document;
+    expect(boxOperations(restyled, [{ block: "p2", at: 0, quote: "Owned" }], { toggle: "bold" })).toEqual({ operations: [{ op: "format", block: "p2", at: 0, quote: "Owned", bold: false }] });
+  });
+
+  test("the agent reads smart chips by their kind and name", () => {
+    const described = describeDocument({ ...checkedDocument({ url: URL }), snapshot: snapshot(styledGoogle()) });
+    expect(described).toContain("p2 Owned: [person Ana Example], [date Nov 20, 2026], [link Advisory 2026-1025]");
+    expect(described).toContain("[person …], [date …] and [link …] are smart chips");
+  });
+});
+
 describe("anchors", () => {
   test("anchor a quote that appears once in its paragraph, with the text around it", () => {
     expect(anchorIn(snapshot(), "p2", "by Q3")).toEqual({ tab: "t.0", block: "p2", quote: "by Q3", prefix: "The launch is planned ", suffix: " 🚀." });

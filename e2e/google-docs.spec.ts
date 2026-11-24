@@ -46,6 +46,61 @@ test.afterEach(() => {
   google.document = fixture;
 });
 
+/** The fixture with its own named styles, and smart chips and styled text in the paragraphs it gained last. */
+function withChips() {
+  const copy = structuredClone(fixture) as typeof fixture & { tabs: { documentTab: { namedStyles?: unknown; body: { content: unknown[] } } }[] };
+  const tab = copy.tabs[0]!;
+  tab.documentTab.namedStyles = {
+    styles: [
+      { namedStyleType: "NORMAL_TEXT", textStyle: { bold: false, italic: false, underline: false, strikethrough: false, foregroundColor: { color: { rgbColor: {} } }, fontSize: { magnitude: 11, unit: "PT" }, weightedFontFamily: { fontFamily: "Arial", weight: 400 } } },
+      { namedStyleType: "HEADING_1", textStyle: { foregroundColor: { color: { rgbColor: { red: 1, green: 0.33333334, blue: 0.050980393 } } }, fontSize: { magnitude: 23, unit: "PT" }, weightedFontFamily: { fontFamily: "Plus Jakarta Sans", weight: 500 } } },
+      { namedStyleType: "HEADING_6", textStyle: { italic: true, fontSize: { magnitude: 11, unit: "PT" } } },
+    ],
+  };
+  tab.documentTab.body.content.push(
+    {
+      startIndex: 118,
+      endIndex: 139,
+      paragraph: {
+        elements: [
+          { startIndex: 118, endIndex: 131, textRun: { content: "Reviewed by: ", textStyle: { bold: true, foregroundColor: { color: { rgbColor: { red: 0.043137256, green: 0.34117648, blue: 0.8156863 } } }, fontSize: { magnitude: 10, unit: "PT" }, weightedFontFamily: { fontFamily: "Plus Jakarta Sans", weight: 500 } } } },
+          { startIndex: 131, endIndex: 132, person: { personProperties: { name: "Ana Example", email: "ana@example.com" } } },
+          { startIndex: 132, endIndex: 134, textRun: { content: ", ", textStyle: {} } },
+          { startIndex: 134, endIndex: 135, dateElement: { dateElementProperties: { displayText: "Nov 20, 2026" } } },
+          { startIndex: 135, endIndex: 137, textRun: { content: ", ", textStyle: {} } },
+          { startIndex: 137, endIndex: 138, richLink: { richLinkProperties: { title: "Advisory 2026-1025", uri: "https://docs.google.com/document/d/1other/edit" } } },
+          { startIndex: 138, endIndex: 139, textRun: { content: "\n", textStyle: {} } },
+        ],
+        paragraphStyle: { namedStyleType: "NORMAL_TEXT" },
+      },
+    },
+    {
+      startIndex: 139,
+      endIndex: 141,
+      paragraph: {
+        elements: [
+          { startIndex: 139, endIndex: 140, person: { suggestedDeletionIds: ["suggest.gone"], personProperties: { name: "Old Name", email: "old@example.com" } } },
+          { startIndex: 140, endIndex: 141, textRun: { content: "\n", textStyle: {} } },
+        ],
+        paragraphStyle: { namedStyleType: "NORMAL_TEXT" },
+      },
+    },
+    {
+      startIndex: 141,
+      endIndex: 148,
+      paragraph: {
+        elements: [
+          { startIndex: 141, endIndex: 146, textRun: { content: "Note ", textStyle: {} } },
+          { startIndex: 146, endIndex: 147, richLink: { richLinkProperties: { title: "Impact assessment for every product line, with the timeline, the owners and the plan for telling customers", uri: "https://docs.google.com/document/d/1long/edit" } } },
+          { startIndex: 147, endIndex: 148, textRun: { content: "\n", textStyle: {} } },
+        ],
+        paragraphStyle: { namedStyleType: "HEADING_6" },
+      },
+    },
+  );
+  return copy;
+}
+
 /** The fixture with collaborators' suggestions of style: “Budget: ” in p5 made italic, and p1 made a Heading 2. */
 function withStyleSuggestions() {
   const copy = structuredClone(fixture);
@@ -610,6 +665,58 @@ test("the agent proposes edits to a Google doc shown in Mirador; you select text
       await expect(view(page).locator('[data-block="p6"] b, [data-block="p6"] strong')).toHaveCount(0);
     });
   });
+
+  test("smart chips show their names and the doc's own colours and type show on its text", async ({ page }) => {
+    const conversation = await startWithTheAgent(page);
+    google.document = withChips();
+    await tool(conversation, "app_open", { app: "google-docs", file: "advisory.gdoc" });
+    await tool(conversation, "apply", { op: { op: "link", url: URL } });
+    await tool(conversation, "app_run", { task: "pull" });
+
+    const chips = view(page).locator('[data-block="p6"]');
+    await expect(chips.locator(".chip-person")).toHaveText("Ana Example");
+    await expect(chips.locator(".chip-date")).toHaveText("Nov 20, 2026");
+    await expect(chips.locator(".chip-link")).toHaveText("Advisory 2026-1025");
+    await expect(chips).toContainText("Reviewed by: Ana Example, Nov 20, 2026, Advisory 2026-1025");
+    await expect(chips.locator(".chip-person")).toHaveAttribute("title", "mailto:ana@example.com");
+    await expect(chips).toHaveAttribute("contenteditable", "true");
+    await expect(chips.locator('[data-start="0"]')).toHaveCSS("color", "rgb(11, 87, 208)");
+    await expect(chips.locator('[data-start="0"]')).toHaveCSS("font-weight", "700");
+    await expect(chips.locator(".chip-link")).toHaveCSS("color", "rgb(11, 87, 208)");
+    await expect(view(page).locator('[data-block="p1"]')).toHaveCSS("color", "rgb(255, 85, 13)");
+    await expect(view(page).locator('[data-block="p2"]')).toHaveCSS("color", "rgb(0, 0, 0)");
+
+    const gone = view(page).locator('[data-block="p7"] .chip-person');
+    await expect(gone).toHaveClass(/their-deletion/);
+    await expect(gone).toHaveCSS("color", "rgb(19, 115, 51)");
+    await expect(gone).toHaveCSS("text-decoration-line", "line-through");
+
+    await caretAfter(page, "p6", "Reviewed by: ");
+    await page.keyboard.type("Re: ");
+    await view(page).locator("h2").click();
+    await expect(view(page).locator(".change").last()).toContainText("insert “Re: ” after “by: ” in p6");
+    await expect(chips).toHaveText("Reviewed by: Re: Ana Example, Nov 20, 2026, Advisory 2026-1025");
+
+    expect(await tool(conversation, "apply", { op: { op: "paragraph", block: "p6", style: "HEADING_1" } })).toContain("make p6 Heading 1");
+    await expect(chips).toHaveJSProperty("tagName", "H1");
+    await expect(chips).toHaveCSS("color", "rgb(255, 85, 13)");
+
+    const note = view(page).locator('[data-block="p8"]');
+    const [chipBox, noteBox] = [await note.locator(".chip-link").boundingBox(), await note.boundingBox()];
+    expect(chipBox!.x + chipBox!.width).toBeLessThanOrEqual(noteBox!.x + noteBox!.width + 0.5);
+
+    const box = view(page).getByRole("dialog", { name: "Selected text" });
+    await expect(note.locator('[data-start="0"]')).toHaveCSS("font-style", "italic");
+    await select(page, "p8", "Note");
+    await expect(box.getByRole("button", { name: "Italic" })).toHaveAttribute("aria-pressed", "true");
+    await box.getByRole("button", { name: "Italic" }).click();
+    await expect(view(page).locator(".change").filter({ hasText: "“Note”" })).toContainText("make “Note” in p8 not italic");
+    await expect(note.locator('[data-start="0"]')).toHaveCSS("font-style", "normal");
+
+    await mirador.chooseInSettings(page, "Theme", "Dark");
+    await expect(view(page).locator('[data-block="p2"]')).toHaveCSS("color", "rgb(255, 255, 255)");
+    await expect(chips).toHaveCSS("color", "rgb(255, 136, 86)");
+  });
 });
 
 test.describe("arrow keys", () => {
@@ -731,6 +838,7 @@ test.describe("in a narrow canvas panel", () => {
     await tool(conversation, "apply", { op: { op: "link", url: URL } });
     await tool(conversation, "app_run", { task: "pull" });
     await tool(conversation, "apply", { op: { op: "replace", block: "p6", quote: "Notes", with: "Open notes" } });
+    await expect(view(page).getByRole("tab", { name: /^To send 1/ })).toBeVisible();
     await expect(view(page).getByRole("tabpanel")).toBeHidden();
     await expect(view(page).getByRole("button", { name: "Send", exact: true })).toBeVisible();
     await view(page).getByRole("tab", { name: /^Comments/ }).click();

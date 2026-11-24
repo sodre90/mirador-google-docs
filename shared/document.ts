@@ -1,17 +1,47 @@
+/** How Docs styles text: its type, colour and weight, where the doc sets them. */
+export interface TextLook {
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+  strikethrough?: boolean;
+  /** The colour Docs gives it, as #rrggbb. */
+  color?: string;
+  /** Its size, in points, as Docs counts them. */
+  fontSize?: number;
+  fontFamily?: string;
+  /** The family's weight, e.g. 500 for medium. */
+  fontWeight?: number;
+}
+
+/** A smart chip: a person, a date or a link to a Google file, shown by its name and taking one place in the text. */
+export interface Chip {
+  kind: "person" | "date" | "link";
+  label: string;
+  /** Where it leads, such as a person's email address. */
+  url?: string;
+}
+
 /** A run of text in a paragraph, with its place in the paragraph's text counted in UTF-16 code units, as Google counts. */
 export interface TextRun {
   text: string;
   start: number;
-  bold?: true;
-  italic?: true;
-  underline?: true;
-  strikethrough?: true;
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+  strikethrough?: boolean;
   link?: string;
+  /** Its type, colour and weight, where the run sets them itself. */
+  color?: string;
+  fontSize?: number;
+  fontFamily?: string;
+  fontWeight?: number;
   /** Google's own open suggestions this text is part of, as inserted or as deleted text. */
   inserted?: string[];
   deleted?: string[];
   /** Google's own open suggestions to change this text's style. */
   restyled?: string[];
+  /** A smart chip, whose label the doc shows in place of its object mark. */
+  chip?: Chip;
   /** An image, a chip or another object, which takes up places in the doc but has no text: its text is OBJECT_MARK. */
   object?: true;
 }
@@ -46,6 +76,8 @@ export interface Tab {
   id: string;
   title: string;
   blocks: Block[];
+  /** The doc's named text styles by name, the base under each run's own: missing from a snapshot pulled before they were read. */
+  styles?: Partial<Record<ParagraphStyle, TextLook>>;
 }
 
 export interface Post {

@@ -1,6 +1,6 @@
 import type { AppAuthor } from "../mirador/api.ts";
 import { anchorIn, locate, paragraphAnchor, spanOf, spansOverlap } from "./anchor.ts";
-import { checkedDocument, documentIdOf, findParagraph, isAnchored, LISTS, PARAGRAPH_STYLES, TEXT_STYLES, type Anchor, type Change, type ChangeBody, type GoogleDoc, type List, type Paragraph, type ParagraphStyle, type Snapshot, type TextStyle } from "./document.ts";
+import { checkedDocument, documentIdOf, findParagraph, isAnchored, LISTS, PARAGRAPH_STYLES, TEXT_STYLES, type Anchor, type Change, type ChangeBody, type GoogleDoc, type List, type Paragraph, type ParagraphStyle, type Snapshot, type Tab, type TextLook, type TextStyle } from "./document.ts";
 import { STYLE_NAMES } from "./styles.ts";
 import { writtenChange } from "./write.ts";
 
@@ -157,10 +157,13 @@ function formatBody(operation: Operation, anchor: Anchor): ChangeBody {
   return { kind: "format", anchor, style };
 }
 
-/** Whether all of [start, end) of a paragraph already has the style. */
-export function styledAlready(paragraph: Paragraph, start: number, end: number, style: TextStyle) {
+/** The look a paragraph's named style gives its text, where the doc says. */
+const namedLookOf = (tab: Tab, style: string): TextLook | undefined => tab.styles?.[style as ParagraphStyle];
+
+/** Whether all of [start, end) of a paragraph already has the style: a run's own, else its named style's. */
+export function styledAlready(paragraph: Paragraph, start: number, end: number, style: TextStyle, named?: TextLook) {
   const covering = paragraph.runs.filter((run) => run.start < end && start < run.start + run.text.length);
-  return covering.every((run) => TEXT_STYLES.every((name) => style[name] === undefined || style[name] === (run[name] === true)) && (style.link === undefined || style.link === (run.link ?? null)));
+  return covering.every((run) => TEXT_STYLES.every((name) => style[name] === undefined || style[name] === (run[name] ?? named?.[name] ?? false)) && (style.link === undefined || style.link === (run.link ?? null)));
 }
 
 /** Text of one paragraph, as a selection gives it. */
@@ -186,9 +189,10 @@ export function shownStyled(snapshot: Snapshot, changes: Change[], stretch: Stre
   const { at } = stretch;
   const end = at + stretch.quote.length;
   const exact = formatOf(snapshot, changes, stretch);
+  const named = namedLookOf(found.tab, shownParagraph(snapshot, changes, stretch.block)?.style ?? found.paragraph.style);
   return Object.entries(style).every(([name, value]) => {
     const pending = exact?.style[name as keyof TextStyle];
-    return pending !== undefined ? pending === value : styledAlready(found.paragraph, at, end, { [name]: value });
+    return pending !== undefined ? pending === value : styledAlready(found.paragraph, at, end, { [name]: value }, named);
   });
 }
 
@@ -259,13 +263,15 @@ type StyleChange = Extract<ChangeBody, { kind: "format" | "paragraph" }>;
 
 const isStyleChange = (body: ChangeBody): body is StyleChange => body.kind === "format" || body.kind === "paragraph";
 
-/** A style change without the parts that the doc has already, or null when nothing is left of it. */
-function withoutNoOps(body: StyleChange, snapshot: Snapshot): StyleChange | null {
+/** A style change without the parts that the doc shows already, a pending style of its paragraph included, or null when nothing is left of it. */
+function withoutNoOps(body: StyleChange, document: GoogleDoc): StyleChange | null {
+  const snapshot = requireSnapshot(document);
   const found = locate(body.anchor, snapshot);
   if ("problem" in found) return body;
-  const { paragraph, start, end } = found;
+  const { tab, paragraph, start, end } = found;
   if (body.kind === "format") {
-    const style = Object.fromEntries(Object.entries(body.style).filter(([name, value]) => !styledAlready(paragraph, start, end, { [name]: value })));
+    const named = namedLookOf(tab, shownParagraph(snapshot, document.changes, paragraph.id)?.style ?? paragraph.style);
+    const style = Object.fromEntries(Object.entries(body.style).filter(([name, value]) => !styledAlready(paragraph, start, end, { [name]: value }, named)));
     return Object.keys(style).length ? { ...body, style } : null;
   }
   const { style, list, ...rest } = body;
@@ -292,7 +298,7 @@ function ownStyleChangeOn(document: GoogleDoc, body: StyleChange): (Change & Sty
 function restyledOwn(document: GoogleDoc, own: Change & StyleChange, body: StyleChange): Applied {
   const merged: StyleChange =
     own.kind === "format" && body.kind === "format" ? { ...own, style: { ...own.style, ...body.style } } : ({ ...own, ...body, anchor: own.anchor } as StyleChange);
-  const kept = withoutNoOps(merged, requireSnapshot(document));
+  const kept = withoutNoOps(merged, document);
   if (!kept) return { document: { ...document, changes: document.changes.filter(({ id }) => id !== own.id) }, inverse: { op: "restore", changes: [own] }, summary: `Took back ${own.id}.`, touched: [own.id] };
   const change = { ...own, ...kept } as Change;
   return { document: replaced(document, [change]), inverse: { op: "put", change: own }, summary: `Changed ${own.id}: ${changeSummary(change)}.`, touched: [own.id] };
@@ -332,7 +338,7 @@ function propose(document: GoogleDoc, operation: Operation, author: AppAuthor | 
   const raw = bodyOf(operation, snapshot);
   const own = author?.kind === "you" && isStyleChange(raw) ? ownStyleChangeOn(document, raw) : undefined;
   if (own) return restyledOwn(document, own, raw as StyleChange);
-  const body = isStyleChange(raw) ? withoutNoOps(raw, snapshot) : raw;
+  const body = isStyleChange(raw) ? withoutNoOps(raw, document) : raw;
   if (!body) throw new Error(alreadyMessage(raw as StyleChange));
   const target = decisionTarget(body);
   const earlier = target && pendingDecisionOn(document.changes, target);
